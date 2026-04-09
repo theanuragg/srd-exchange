@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   useAccount,
   useSwitchChain,
@@ -248,6 +248,7 @@ export function useWalletManager() {
   const [usdtBalance, setUsdtBalance] = useState<bigint | null>(null);
   const [usdtDecimals, setUsdtDecimals] = useState<number | null>(null);
   const [smartWalletAddress, setSmartWalletAddress] = useState<string | null>(null);
+  const smartWalletAddressRef = useRef<string | null>(null);
   const [smartWalletUsdtBalance, setSmartWalletUsdtBalance] = useState<bigint | null>(null);
   const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
   const [isPending, setIsPending] = useState(false);
@@ -306,37 +307,41 @@ export function useWalletManager() {
   };
 
   // Fetch smart account address early (separate from balance fetching)
-  // This ensures the address is available for new users even before first transaction
+  // Fetch smart account address on every chain switch.
+  // Always try to get the real address for the current chain.
+  // If Biconomy returns 0x000 for a chain, fall back to the last known valid address.
   useEffect(() => {
-    const fetchSmartAccountAddress = async () => {
-      if (!smartAccount) {
-        console.log("⏳ Smart account not yet initialized");
-        return;
-      }
+    if (!smartAccount) return;
 
-      try {
-        const smartAddress = await smartAccount.getAddress();
+    smartAccount.getAddress().then((smartAddress: string) => {
+      const isZero = !smartAddress || smartAddress === '0x0000000000000000000000000000000000000000';
+      if (!isZero) {
+        // Got a valid address for this chain — update both ref and state
+        smartWalletAddressRef.current = smartAddress;
         setSmartWalletAddress(smartAddress);
-        console.log("✅ Smart Account Address computed:", smartAddress);
-      } catch (error) {
-        console.error("❌ Failed to get smart account address:", error);
+        console.log("✅ Smart Account Address for chain", chainId, ":", smartAddress);
+      } else if (smartWalletAddressRef.current) {
+        // Biconomy returned 0x000 for this chain — use last known valid address
+        setSmartWalletAddress(smartWalletAddressRef.current);
+        console.log("⚠️ Got zero address for chain", chainId, "— using stored:", smartWalletAddressRef.current);
       }
-    };
-
-    fetchSmartAccountAddress();
-  }, [smartAccount]);
+    }).catch((err: any) => {
+      // On error, preserve last known valid address
+      if (smartWalletAddressRef.current) {
+        setSmartWalletAddress(smartWalletAddressRef.current);
+      }
+      console.error("❌ Failed to get smart account address:", err);
+    });
+  }, [smartAccount, chainId]);
 
   // Fetch smart wallet USDT balance
   const refetchSmartWalletUsdt = async () => {
     if (!smartAccount || chainId !== bsc.id) return;
 
     try {
-      // Get smart account address (should already be set by the useEffect above)
-      const smartAddress = smartWalletAddress || await smartAccount.getAddress();
-
-      if (!smartWalletAddress && smartAddress) {
-        setSmartWalletAddress(smartAddress);
-      }
+      // Use stored address — never call getAddress() again after initial fetch
+      const smartAddress = smartWalletAddressRef.current;
+      if (!smartAddress) return;
 
       const balance = await retryWithRPCFailover(async (client) => {
         return await client.readContract({
@@ -1137,6 +1142,11 @@ export function useWalletManager() {
         balances: {
           bnb: { raw: "0", formatted: "0", symbol: "BNB" },
           usdt: { raw: "0", formatted: "0", symbol: "USDT" },
+        },
+        smartWallet: {
+          address: smartWalletAddressRef.current || smartWalletAddress,
+          usdtBalance: "0",
+          usdtBalanceRaw: "0",
         },
         canTrade: false,
         lastUpdated: new Date().toISOString(),
