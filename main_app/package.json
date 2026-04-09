@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "node init && next dev",
+    "build": "node init && next build",
     "postinstall": "prisma generate",
-    "start": "next start",
+    "start": "node init && next start",
     "lint": "next lint"
   },
   "dependencies": {
@@ -16,7 +16,7 @@
     "@particle-network/wallet": "^2.1.1",
     "@prisma/client": "^6.19.2",
     "@radix-ui/react-collapsible": "^1.1.12",
-"@tanstack/react-query": "^5.90.18",
+    "@tanstack/react-query": "^5.90.18",
     "aws-sdk": "^2.1693.0",
     "ethers": "^6.16.0",
     "eventemitter2": "^6.4.9",
