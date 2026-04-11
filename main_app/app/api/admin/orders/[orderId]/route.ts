@@ -75,6 +75,7 @@ export async function PATCH(
         }
 
         if (body.customAmount !== undefined) {
+            updateData.customAmount = body.customAmount
             // Store custom amount in adminNotes or a dedicated field
             const customAmountNote = `Custom amount: ₹${body.customAmount}`
             updateData.adminNotes = updateData.adminNotes

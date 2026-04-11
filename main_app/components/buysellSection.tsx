@@ -60,14 +60,14 @@ export default function BuySellSection() {
   const GLOBAL_MIN_USDT = 0.1;
 
   // Buy Limits
-  const BUY_UPI_MAX_USDT = 20;
-  const BUY_CDM_MIN_USDT = 100;
-  const BUY_CDM_MAX_USDT = 300;
+  const BUY_UPI_MAX_USDT = 1;
+  const BUY_CDM_MIN_USDT = 1;
+  const BUY_CDM_MAX_USDT = 150;
 
   // Sell Limits
   const SELL_UPI_MAX_USDT = 100;
-  const SELL_CDM_MIN_USDT = 100;
-  const SELL_CDM_MAX_USDT = 500;
+  const SELL_CDM_MIN_USDT = 58.4112; // Approx ₹5,000 at 85.6 rate
+  const SELL_CDM_MAX_USDT = 250;
 
   const { chainId } = useAccount();
   const [activeTab, setActiveTab] = useState("");
@@ -668,6 +668,14 @@ export default function BuySellSection() {
 
     if (orderSide === "buy") {
       if (paymentMethod === "upi") {
+        if (usdtAmount < 1) {
+          return {
+            isValid: false,
+            error: `Buy UPI orders require minimum 1 USDT. Current: ${usdtAmount.toFixed(
+              4
+            )} USDT`,
+          };
+        }
         if (usdtAmount > BUY_UPI_MAX_USDT) {
           return {
             isValid: false,

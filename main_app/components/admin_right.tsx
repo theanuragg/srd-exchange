@@ -280,7 +280,7 @@ export default function AdminRight() {
 
       if (paymentMethod === 'BUY_CDM') {
         if (!trimmedUpiId || trimmedUpiId.length === 0) {
-          alert('Please enter a valid UPI ID for ₹500 verification');
+          alert('Please enter a valid UPI ID for ₹5 verification');
           setSendingPaymentDetails(false);
           return;
         }
@@ -295,8 +295,10 @@ export default function AdminRight() {
         return;
       }
 
-      console.log('💰 Custom amount validation:', {
-        originalAmount: selectedOrder.amount,
+      console.log('🚀 Sending payment details:', {
+        orderId,
+        paymentMethod,
+        adminUpiId: trimmedUpiId,
         customOrderValue,
         parsedCustomAmount: customAmountValue
       });
@@ -306,9 +308,9 @@ export default function AdminRight() {
         adminUpiId: trimmedUpiId,
         adminBankDetails: paymentMethod === 'BUY_UPI' ? null : null,
         adminNotes: paymentMethod === 'BUY_CDM'
-          ? `UPI ID provided for ₹500 verification. Custom amount: ₹${customAmountValue}`
+          ? `UPI ID provided for ₹5 verification. Custom amount: ₹${customAmountValue}`
           : `Payment details provided. Custom amount: ₹${customAmountValue}`,
-        customAmount: customAmountValue // 🔥 ADD: Include custom amount in update
+        customAmount: paymentMethod === 'BUY_CDM' ? undefined : customAmountValue // 🔥 FIX: Only update custom amount for UPI at this stage
       };
 
       console.log('📝 Sending payment details update:', paymentDetailsUpdate);
@@ -396,7 +398,8 @@ export default function AdminRight() {
       const bankDetailsUpdate = {
         adminBankDetails: JSON.stringify(adminBankDetails),
         adminNotes: `Bank details provided for main transfer. Amount: ${customOrderValue}`,
-        // Don't change the status here - keep it as ADMIN_APPROVED
+        status: 'ADMIN_SENT_PAYMENT_INFO', // 🔥 CHANGE: Update status when sending bank details
+        customAmount: parseFloat(customOrderValue) // 🔥 ADD: Save custom amount when sending bank details
       };
 
       const updateResponse = await makeAdminRequest(`/api/admin/orders/${orderId}`, {
@@ -988,7 +991,7 @@ export default function AdminRight() {
             <>
               {/* UPI Verification Section for CDM Orders */}
               <div className="bg-[#101010] border border-[#3E3E3E] rounded-md p-4 mb-6">
-                <h3 className="text-lg font-semibold text-white mb-4 font-montserrat">Send UPI for ₹500 Verification</h3>
+                <h3 className="text-lg font-semibold text-white mb-4 font-montserrat">Send UPI for ₹5 Verification</h3>
 
                 <div className="space-y-4">
                   <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-md">
@@ -997,21 +1000,21 @@ export default function AdminRight() {
                       <span className="text-blue-400 text-sm font-montserrat">CDM Order Process</span>
                     </div>
                     <p className="text-gray-300 text-xs">
-                      For CDM orders, user must first pay ₹500 verification fee via UPI before bank transfer
+                      For CDM orders, user must first pay ₹5 verification fee via UPI before bank transfer
                     </p>
                   </div>
 
                   <div>
                     <div className="flex items-center space-x-2 mb-2">
                       <User className="w-4 h-4 text-white" />
-                      <span className="text-gray-400 text-sm font-montserrat">Admin UPI ID for ₹500 Verification</span>
+                      <span className="text-gray-400 text-sm font-montserrat">Admin UPI ID for ₹5 Verification</span>
                     </div>
                     <input
                       type="text"
                       value={adminUpiId}
                       onChange={(e) => setAdminUpiId(e.target.value)}
                       className="w-full bg-[#1E1C1C] border border-gray-600/50 rounded-md py-2 px-4 text-white placeholder-gray-400 focus:outline-none focus:border-[#622DBF] focus:ring-1 focus:ring-purple-500/20 font-montserrat"
-                      placeholder="Enter your UPI ID for ₹500 verification"
+                      placeholder="Enter your UPI ID for ₹5 verification"
                     />
                   </div>
 
@@ -1023,7 +1026,7 @@ export default function AdminRight() {
                       <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 font-montserrat">₹</span>
                       <input
                         type="text"
-                        value="500"
+                        value="5"
                         readOnly
                         className="w-full bg-[#2a2a2a] border border-gray-600/50 rounded-md py-2 pl-7 pr-4 text-yellow-400 focus:outline-none font-montserrat font-bold"
                       />
@@ -1039,7 +1042,7 @@ export default function AdminRight() {
                       <div className="flex items-center space-x-2">
                         <CheckCircle className="w-4 h-4 text-green-400" />
                         <p className="text-green-400 text-sm font-montserrat">
-                          UPI ID sent! User can now pay ₹500 verification fee.
+                          UPI ID sent! User can now pay ₹5 verification fee.
                         </p>
                       </div>
                     </motion.div>
@@ -1063,7 +1066,7 @@ export default function AdminRight() {
                     ) : (
                       <div className="flex items-center justify-center space-x-2">
                         <Send className="w-4 h-4" />
-                        <span>Send UPI ID for ₹500 Verification</span>
+                        <span>Send UPI ID for ₹5 Verification</span>
                       </div>
                     )}
                   </button>
@@ -1079,7 +1082,7 @@ export default function AdminRight() {
                     <div className="flex items-center space-x-2">
                       <AlertTriangle className="w-4 h-4 text-yellow-400" />
                       <p className="text-yellow-400 text-sm font-montserrat">
-                        Send UPI ID first for ₹500 verification before providing bank details
+                        Send UPI ID first for ₹5 verification before providing bank details
                       </p>
                     </div>
                   </div>
