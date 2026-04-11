@@ -297,7 +297,7 @@ export async function POST(request: NextRequest) {
       type: orderType.replace('_', ' '),
       orderType: order.orderType,
       price: Number(order.buyRate || sellRate || 0),
-      currency: order.orderType === 'BUY_CDM' || 'SELL_CDM' ? 'CDM' : 'UPI',
+      currency: order.orderType === 'BUY_CDM' ? 'CDM' : 'UPI',
       status: order.status,
       blockchainOrderId: order.blockchainOrderId,
       user: order.user,
