@@ -528,7 +528,7 @@ export default function BuyCDMModal({
                       </span>
                     </div>
                     <p className="text-gray-300 text-sm">
-                      Waiting for admin to provide UPI ID for ₹500 verification
+                      Waiting for admin to provide UPI ID for ₹5 verification
                       payment
                     </p>
                   </motion.div>
@@ -548,7 +548,7 @@ export default function BuyCDMModal({
                       </span>
                     </div>
                     <p className="text-gray-300 text-sm">
-                      Please pay ₹500 verification fee to the admin's UPI ID
+                      Please pay ₹5 verification fee to the admin's UPI ID
                       below
                     </p>
                   </motion.div>
@@ -596,7 +596,7 @@ export default function BuyCDMModal({
                 <div className="mb-6">
                   <div className="text-4xl md:text-4xl font-bold text-white mb-2">
                     {!isUpiPaid
-                      ? "₹500"
+                      ? "₹5"
                       : hasReceivedAdminDetails && paymentDetails?.customAmount
                         ? `₹${paymentDetails.customAmount}`
                         : `₹${displayAmount}`}
@@ -699,7 +699,7 @@ export default function BuyCDMModal({
                 {paymentDetails?.adminUpiId && !isUpiPaid && (
                   <div className="mb-8">
                     <div className="text-white mb-1">
-                      Please pay ₹500 to admin's UPI ID for verification
+                      Please pay ₹5 to admin's UPI ID for verification
                     </div>
                     <div className="text-[#26AF6C] text-xs flex items-center justify-center mb-4">
                       <TriangleAlert className="w-3 h-3 mr-1" />
@@ -1115,7 +1115,7 @@ export default function BuyCDMModal({
                       ) : paymentDetails?.adminUpiId && !isUpiPaid ? (
                         <>
                           <CreditCard className="w-5 h-5" />
-                          <span>I Paid ₹500 To Admin UPI</span>
+                          <span>I Paid ₹5 To Admin UPI</span>
                         </>
                       ) : (
                         <>
