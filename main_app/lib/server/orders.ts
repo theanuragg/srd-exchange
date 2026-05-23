@@ -1,3 +1,5 @@
+import "server-only";
+
 import { OrderStatus, OrderType, UserRole } from "@prisma/client";
 
 import { prisma, withDatabaseRetry } from "@/lib/prisma";

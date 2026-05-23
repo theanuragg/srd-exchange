@@ -1148,7 +1148,7 @@ export default function BuySellSection() {
                       <span className="text-gray-500">…</span>
                     ) : displayUsdtBalance !== null ? (
                       <>
-                        
+                        w
                         <span className="block tabular-nums text-white/75">
                           {displayUsdtBalance} USDT
                         </span>

@@ -4,9 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "node scripts/patch-antd-v5.mjs",
     "build": "next build --webpack",
-    "postinstall": "node scripts/patch-antd-v5.mjs && prisma generate",
+    "postinstall": "prisma generate",
     "start": "next start",
     "lint": "next lint"
   },
@@ -32,7 +31,6 @@
     "next": "^16.2.4",
     "next-qrcode": "^2.5.1",
     "pino-pretty": "^13.1.3",
-    "prisma": "^6.19.2",
     "qrcode.react": "^4.2.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
@@ -45,6 +43,7 @@
     "@types/node": "^20.19.30",
     "@types/react": "^18.3.27",
     "@types/react-dom": "^18.3.7",
+    "prisma": "^6.19.2",
     "tailwindcss": "^4.1.18",
     "typescript": "^5.9.3"
   }
