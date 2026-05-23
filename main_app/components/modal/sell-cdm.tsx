@@ -197,9 +197,23 @@ export default function SellCDMModal({
 
   const handleMoneyReceived = async () => {
     try {
-      console.log('🔗 Completing sell order on blockchain...');
+      // Only call completeSellOrderOnChain if blockchainOrderId is a numeric ID (not a tx hash)
+      // QR orders use userOpHash (0x...), while regular orders use numeric IDs
       if (orderData?.blockchainOrderId) {
-        await completeSellOrderOnChain(parseInt(orderData.blockchainOrderId));
+        const orderId = parseInt(orderData.blockchainOrderId, 10);
+        // Only proceed if it's a valid numeric ID (not a hash like 0x...)
+        if (!isNaN(orderId) && orderId > 0) {
+          console.log('🔗 Completing sell order on blockchain for order ID:', orderId);
+          try {
+            await completeSellOrderOnChain(orderId);
+            console.log('✅ Blockchain call succeeded');
+          } catch (blockchainError) {
+            console.warn('⚠️ Blockchain call failed (might be QR order):', blockchainError);
+            // Don't fail the entire flow - QR orders are database-only
+          }
+        } else {
+          console.log('ℹ️ Skipping blockchain call - QR/sponsored order (tx hash:', orderData.blockchainOrderId, ')');
+        }
       }
       setIsMoneyReceived(true);
       setIsCoinSent(true);
@@ -254,13 +268,17 @@ export default function SellCDMModal({
 
       console.log("💰 Money Received on Account clicked");
     } catch (error) {
-      console.error('❌ Error completing sell order on blockchain:', error);
+      // Non-critical blockchain errors - QR orders don't need blockchain confirmation
+      console.error('⚠️ Error in handleMoneyReceived:', error);
+      
+      // Still mark as money received since the main transaction succeeded
       setIsMoneyReceived(true);
       setIsCoinSent(true);
 
-      // Still try to update database even if blockchain operation fails
+      // Always try to update database to track user's confirmation
       if (orderData) {
         try {
+          console.log('💾 Updating database with money received status...');
           const response = await fetch(
             `/api/orders/${orderData.fullId || orderData.id}/confirm-received`,
             {
@@ -277,7 +295,7 @@ export default function SellCDMModal({
 
           const result = await response.json();
           if (result.success) {
-            console.log('✅ Database updated despite blockchain error');
+            console.log('✅ Database updated - money received confirmed');
 
             // Broadcast database update event
             window.dispatchEvent(new CustomEvent('orderDatabaseUpdated', {
@@ -289,9 +307,11 @@ export default function SellCDMModal({
               bubbles: true,
               cancelable: true
             }));
+          } else {
+            console.error('❌ Database update failed:', result.error);
           }
         } catch (dbError) {
-          console.error('❌ Database update failed:', dbError);
+          console.error('❌ Failed to update database:', dbError);
         }
       }
     }

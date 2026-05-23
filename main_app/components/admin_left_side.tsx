@@ -20,6 +20,9 @@ interface Order {
   price: number;
   currency: string;
   status: string;
+  adminUpiId?: string | null;
+  scannedUpiId?: string | null;
+  isQrTransaction?: boolean;
   user: {
     id: string;
     walletAddress: string;
@@ -34,6 +37,7 @@ export default function AdminLeftSide() {
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [qrOrders, setQrOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -101,6 +105,11 @@ export default function AdminLeftSide() {
         statusParam = 'pending,pending_admin_payment';
       }
 
+      // Map "rejected" filter to "CANCELLED" status
+      if (statusParam === 'rejected') {
+        statusParam = 'cancelled';
+      }
+
       console.log('Fetching orders with status:', statusParam);
 
       const data = await makeAdminRequest(`/api/admin/orders?status=${statusParam}`);
@@ -111,6 +120,17 @@ export default function AdminLeftSide() {
       } else {
         console.error('API returned error:', data.error);
         setError(data.error);
+      }
+
+      let qrStatusParam = statusParam;
+      if (qrStatusParam === 'pending,pending_admin_payment') {
+        qrStatusParam = 'pending';
+      }
+      const qrData = await makeAdminRequest(`/api/admin/qr-transactions?status=${qrStatusParam}`);
+      if (qrData.success) {
+        setQrOrders(qrData.transactions || []);
+      } else {
+        setQrOrders([]);
       }
     } catch (error) {
       console.error('Error fetching orders:', error);
@@ -133,10 +153,15 @@ export default function AdminLeftSide() {
   const handleAccept = async (order: Order) => {
     try {
       console.log('Accepting order:', order.fullId);
+
+      // Sell orders move to PENDING_ADMIN_PAYMENT after acceptance
+      // Buy orders move to ADMIN_APPROVED
+      const nextStatus = order.orderType.includes('SELL') ? 'PENDING_ADMIN_PAYMENT' : 'ADMIN_APPROVED';
+
       const data = await makeAdminRequest(`/api/admin/orders/${order.fullId}`, {
         method: 'PATCH',
         body: JSON.stringify({
-          status: 'ADMIN_APPROVED'
+          status: nextStatus
         })
       });
 
@@ -164,7 +189,11 @@ export default function AdminLeftSide() {
     if (selectedOrder) {
       try {
         console.log('Rejecting order:', selectedOrder.fullId);
-        const data = await makeAdminRequest(`/api/admin/orders/${selectedOrder.fullId}`, {
+        const endpoint = selectedOrder.isQrTransaction || selectedOrder.orderType === 'QR_SCAN'
+          ? `/api/admin/qr-transactions/${selectedOrder.fullId}`
+          : `/api/admin/orders/${selectedOrder.fullId}`;
+
+        const data = await makeAdminRequest(endpoint, {
           method: 'PATCH',
           body: JSON.stringify({
             status: 'CANCELLED',
@@ -189,6 +218,44 @@ export default function AdminLeftSide() {
   const handleCloseCancelModal = () => {
     setShowCancelModal(false);
     setSelectedOrder(null);
+  };
+
+  const handleAcceptQr = async (order: Order) => {
+    try {
+      const data = await makeAdminRequest(`/api/admin/qr-transactions/${order.fullId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'APPROVED' }),
+      });
+
+      if (data.success) {
+        fetchOrders();
+        window.dispatchEvent(new CustomEvent('orderAccepted', {
+          detail: { orderId: order.fullId, order: data.transaction },
+        }));
+      }
+    } catch (error) {
+      console.error('Error accepting QR transaction:', error);
+    }
+  };
+
+  const handleRejectQr = (order: Order) => {
+    setSelectedOrder(order);
+    setShowCancelModal(true);
+  };
+
+  const handleConfirmQrPayment = async (order: Order) => {
+    try {
+      const data = await makeAdminRequest(`/api/admin/qr-transactions/${order.fullId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'COMPLETED' }),
+      });
+
+      if (data.success) {
+        fetchOrders();
+      }
+    } catch (error) {
+      console.error('Error completing QR transaction:', error);
+    }
   };
 
   const handleConfirmPayment = async (order: Order) => {
@@ -217,9 +284,17 @@ export default function AdminLeftSide() {
     order.user.walletAddress.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const filteredQrOrders = qrOrders.filter(order =>
+    order.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    order.user.walletAddress.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (order.scannedUpiId || '').toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'PENDING':
+      case 'PENDING_ADMIN_PAYMENT':
+      case 'APPROVED':
         return 'bg-yellow-500';
       case 'ADMIN_APPROVED':
         return 'bg-blue-500';
@@ -352,7 +427,7 @@ export default function AdminLeftSide() {
           <div className="text-center py-8">
             <p className="text-gray-400">Connect admin wallet to view orders</p>
           </div>
-        ) : filteredOrders.length === 0 ? (
+        ) : filteredOrders.length === 0 && filteredQrOrders.length === 0 ? (
           <div className="text-center py-8">
             <p className="text-gray-400">No orders found</p>
             <p className="text-xs text-gray-500 mt-2">Filter: {activeFilter}</p>
@@ -366,7 +441,89 @@ export default function AdminLeftSide() {
             )}
           </div>
         ) : (
-          filteredOrders.map((order, index) => {
+          <>
+          {filteredQrOrders.length > 0 && (
+            <div className="mb-6">
+              <div className="flex items-center gap-2 mb-3 px-1">
+                <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
+                <h3 className="text-sm font-bold uppercase tracking-wider text-blue-300">
+                  QR Scan Orders
+                </h3>
+              </div>
+              <div className="space-y-4">
+                {filteredQrOrders.map((order) => {
+                  const sellRate = getSellRate('UPI');
+                  const displayAmount = `${parseFloat(String(order.usdtAmount || 0)).toFixed(2)} USDT`;
+                  const displayConversion = `₹${order.amount}`;
+
+                  return (
+                    <div key={`qr-${order.fullId}`} className="bg-[#1D1C1C] rounded-md py-2 px-2 border border-blue-500/30">
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <span className="text-white text-md">{order.id}</span>
+                          <div className="text-white text-xs">{order.time}</div>
+                          <div className="text-xs text-blue-300 mt-1 font-medium">QR Scan &amp; Pay</div>
+                        </div>
+                        <span className="bg-blue-600/40 text-blue-200 text-[0.6rem] font-bold px-2 py-0.5 rounded border border-blue-500/30">
+                          QR SCAN
+                        </span>
+                      </div>
+
+                      <div className="bg-black/30 border border-blue-500/20 rounded p-2 mb-2">
+                        <p className="text-[0.65rem] text-blue-300 uppercase font-bold mb-1">Merchant UPI (from scan)</p>
+                        <p className="text-sm text-white font-mono break-all">
+                          {order.scannedUpiId || 'Waiting for user scan...'}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center justify-center mb-2">
+                        <div className="flex items-center space-x-2 border border-[#464646] py-0.5 px-0.5 rounded">
+                          <span className="text-white font-bold bg-[#222] py-0.5 px-1.5 rounded-sm">{displayAmount}</span>
+                          <span className="text-gray-400 text-sm">{order.type}</span>
+                          <span className="text-white font-bold bg-[#222] py-0.5 px-1.5 rounded-sm">{displayConversion}</span>
+                        </div>
+                      </div>
+
+                      <div className="text-center mb-3">
+                        <span className="text-xs text-gray-500">Rate: ₹{sellRate} per USDT</span>
+                      </div>
+
+                      {activeFilter === 'Pending' && order.status === 'PENDING' && (
+                        <div className="flex space-x-3 justify-end">
+                          <button
+                            onClick={() => handleAcceptQr(order)}
+                            disabled={!order.scannedUpiId}
+                            className="bg-green-600 hover:bg-green-700 disabled:opacity-40 text-white px-6 py-1 rounded-xs text-sm font-medium transition-all"
+                          >
+                            Accept
+                          </button>
+                          <button
+                            onClick={() => handleRejectQr(order)}
+                            className="bg-yellow-600 hover:bg-red-700 text-white px-6 py-1 rounded-xs text-sm font-medium transition-all"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      )}
+
+                      {activeFilter === 'Pending' && order.status === 'APPROVED' && (
+                        <div className="flex justify-end">
+                          <button
+                            onClick={() => handleConfirmQrPayment(order)}
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-1 rounded-xs text-sm font-medium transition-all"
+                          >
+                            Confirm Payment Sent
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {filteredOrders.map((order, index) => {
             const buyRate = getBuyRate(order.currency as 'UPI' | 'CDM');
             const sellRate = getSellRate(order.currency as 'UPI' | 'CDM');
 
@@ -407,27 +564,34 @@ export default function AdminLeftSide() {
                     </div>
                   </div>
                   <div className="flex flex-col items-end space-y-1">
-                    <div className="flex items-center space-x-1">
-                      {order.currency === "UPI" ? (
-                        <Image
-                          src="/phonepay-gpay.svg"
-                          alt="UPI"
-                          width={20}
-                          height={12}
-                          className="flex-shrink-0"
-                        />
-                      ) : (
-                        <Image
-                          src="/bank.svg"
-                          alt="CDM"
-                          width={16}
-                          height={16}
-                          className="flex-shrink-0"
-                        />
+                    <div className="flex items-center space-x-2">
+                      {(order.orderType === 'QR_SCAN' || order.scannedUpiId) && (
+                        <span className="bg-blue-600/40 text-blue-300 text-[0.6rem] font-bold px-1.5 py-0.5 rounded border border-blue-500/30 animate-pulse">
+                          QR
+                        </span>
                       )}
-                      <span className="text-white text-sm">{order.currency}</span>
+                      <div className="flex items-center space-x-1">
+                        {order.currency === "UPI" ? (
+                          <Image
+                            src="/phonepay-gpay.svg"
+                            alt="UPI"
+                            width={20}
+                            height={12}
+                            className="flex-shrink-0"
+                          />
+                        ) : (
+                          <Image
+                            src="/bank.svg"
+                            alt="CDM"
+                            width={16}
+                            height={16}
+                            className="flex-shrink-0"
+                          />
+                        )}
+                        <span className="text-white text-sm">{order.currency}</span>
+                      </div>
+                      <div className={`w-2 h-2 rounded-full ${getStatusColor(order.status)}`}></div>
                     </div>
-                    <div className={`w-2 h-2 rounded-full ${getStatusColor(order.status)}`}></div>
                   </div>
                 </div>
 
@@ -500,7 +664,8 @@ export default function AdminLeftSide() {
                 )}
               </div>
             );
-          })
+          })}
+          </>
         )}
       </div>
 

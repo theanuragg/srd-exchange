@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Image from "next/image";
-import { User } from "lucide-react";
+import { User, AlertCircle, Smartphone } from "lucide-react";
 import { useAdminSession } from "@/hooks/useAdminSession";
 import { useAdminAPI } from "@/hooks/useAdminAPI";
 import { useUserActivity } from "@/hooks/useUserActivity";
@@ -26,6 +26,8 @@ interface Order {
   status: string;
   paymentProof?: string;
   adminUpiId?: string;
+  scannedUpiId?: string;
+  isQrTransaction?: boolean;
   adminBankDetails?: string;
   blockchainOrderId?: number;
   userConfirmedReceived?: boolean;
@@ -390,15 +392,23 @@ export default function AdminCenter() {
       );
 
       if (data.success) {
-        const acceptedOrders = data.orders.filter((order: Order) =>
-          [
-            "ADMIN_APPROVED",
-            "PAYMENT_SUBMITTED",
-            "PENDING_ADMIN_PAYMENT",
-          ].includes(order.status)
-        );
-        console.log("Accepted orders found:", acceptedOrders.length);
-        setOrders(acceptedOrders);
+        const acceptedOrders = data.orders.filter((order: Order) => {
+          if (order.status === "PENDING_ADMIN_PAYMENT") return true;
+          return ["ADMIN_APPROVED", "PAYMENT_SUBMITTED"].includes(order.status);
+        });
+
+        const qrData = await makeAdminRequest("/api/admin/qr-transactions?status=approved");
+        const qrAccepted = qrData.success
+          ? (qrData.transactions || []).map((tx: Order) => ({
+              ...tx,
+              status: "PENDING_ADMIN_PAYMENT",
+              isQrTransaction: true,
+            }))
+          : [];
+
+        const combined = [...qrAccepted, ...acceptedOrders];
+        console.log("Accepted orders found:", combined.length, `(${qrAccepted.length} QR scan)`);
+        setOrders(combined);
       } else {
         console.error("API returned error:", data.error);
         setError(data.error);
@@ -423,7 +433,15 @@ export default function AdminCenter() {
     try {
       console.log("Updating order status:", orderId, "to", status);
 
-      const data = await makeAdminRequest(`/api/admin/orders/${orderId}`, {
+      const targetOrder = orders.find(
+        (o) => o.fullId === orderId || o.id === orderId
+      );
+      const endpoint =
+        targetOrder?.isQrTransaction || targetOrder?.orderType === "QR_SCAN"
+          ? `/api/admin/qr-transactions/${orderId}`
+          : `/api/admin/orders/${orderId}`;
+
+      const data = await makeAdminRequest(endpoint, {
         method: "PATCH",
         body: JSON.stringify({
           status,
@@ -500,58 +518,13 @@ export default function AdminCenter() {
     try {
       setAdminApprovalState((prev) => ({
         ...prev,
-        [orderIndex]: "approving",
+        [orderIndex]: "approved",
       }));
 
-      const order = orders[orderIndex];
-      const buyRate = getBuyRate(order.currency as "UPI" | "CDM");
-
-      const usdtAmountToTransfer = order.usdtAmount
-        ? order.usdtAmount.toString()
-        : (order.amount / buyRate).toFixed(6);
-
-      console.log("🔓 Admin approving USDT for Gas Station address...", {
-        adminAddress: address,
-        orderAmountINR: order.amount,
-        usdtAmountNeeded: usdtAmountToTransfer,
-        buyRate,
-        gasStationAddress: "0x1dA2b030808D46678284dB112bfe066AA9A8be0E",
-      });
-
-      const GAS_STATION_ADDRESS = "0x1dA2b030808D46678284dB112bfe066AA9A8be0E";
-
-      const approveAmount = "1000000";
-
-      console.log(
-        "🔓 Approving large amount for multiple future transactions:",
-        {
-          approveAmount,
-          gasStation: GAS_STATION_ADDRESS,
-        }
-      );
-
-      await approveUSDT(GAS_STATION_ADDRESS as `0x${string}`, approveAmount);
-
-      console.log("⏳ Waiting for Gas Station approval transaction...");
-      await new Promise((resolve) => setTimeout(resolve, 15000));
-
-      // Verify approval worked
-      const isApproved = await checkAdminApproval(orderIndex);
-
-      setAdminApprovalState((prev) => ({
-        ...prev,
-        [orderIndex]: isApproved ? "approved" : "failed",
-      }));
-
-      if (isApproved) {
-        console.log("✅ Gas Station USDT approval successful");
-      } else {
-        console.error("❌ Gas Station approval verification failed");
-      }
-
-      return isApproved;
+      console.log("✅ Admin approval step skipped: sponsored BNB transfers no longer require Gas Station allowance");
+      return true;
     } catch (error) {
-      console.error("❌ Gas Station USDT approval failed:", error);
+      console.error("❌ Admin approval shortcut failed:", error);
       setAdminApprovalState((prev) => ({
         ...prev,
         [orderIndex]: "failed",
@@ -565,55 +538,12 @@ export default function AdminCenter() {
     if (!address || chainId !== 56) return false;
 
     try {
-      const order = orders[orderIndex];
-      const buyRate = getBuyRate(order.currency as "UPI" | "CDM");
-
-      // 🔥 FIX: Calculate the actual USDT amount needed
-      let usdtAmountNeeded: string;
-
-      if (order.usdtAmount) {
-        usdtAmountNeeded = order.usdtAmount.toString();
-      } else {
-        usdtAmountNeeded = (order.amount / buyRate).toFixed(6);
-      }
-
-      // 🔥 FIX: Use 18 decimals for BSC USDT, not 6
-      const usdtAmountWei = parseUnits(usdtAmountNeeded, 18); // BSC USDT uses 18 decimals
-
-      const GAS_STATION_ADDRESS = "0x1dA2b030808D46678284dB112bfe066AA9A8be0E";
-
-      if (!publicClient || !('readContract' in publicClient)) throw new Error("Public client not available");
-      const currentAllowance = await (publicClient as any).readContract({
-        address: CONTRACTS.USDT[56],
-        abi: [
-          {
-            inputs: [
-              { internalType: "address", name: "owner", type: "address" },
-              { internalType: "address", name: "spender", type: "address" },
-            ],
-            name: "allowance",
-            outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-            stateMutability: "view",
-            type: "function",
-          },
-        ],
-        functionName: "allowance",
-        args: [address, GAS_STATION_ADDRESS],
+      console.log("🔍 Admin approval check skipped: sponsored BNB transfers do not require Gas Station allowance", {
+        orderIndex,
       });
-
-      console.log("🔍 Admin approval check for Gas Station:", {
-        orderAmountINR: order.amount,
-        usdtAmountNeeded,
-        required: formatUnits(usdtAmountWei, 18),
-        approved: formatUnits(currentAllowance, 18),
-        sufficient: currentAllowance >= usdtAmountWei,
-        gasStationAddress: GAS_STATION_ADDRESS,
-        buyRate,
-      });
-
-      return currentAllowance >= usdtAmountWei;
+      return true;
     } catch (error) {
-      console.error("❌ Error checking Gas Station approval:", error);
+      console.error("❌ Error checking sponsored transfer readiness:", error);
       return false;
     }
   };
@@ -651,7 +581,7 @@ export default function AdminCenter() {
         // Update the buy order handling with approval check
         if (order.orderType.includes("BUY")) {
           console.log(
-            "💰 BUY ORDER: Processing via Gas Station on BSC Mainnet..."
+            "💰 BUY ORDER: Processing via sponsored smart-account transfer on BSC Mainnet..."
           );
 
           try {
@@ -673,7 +603,6 @@ export default function AdminCenter() {
               usdtAmountToTransfer,
               buyRate,
               orderType: order.orderType,
-              useGasStation: true,
               chainId: 56,
               calculation: `${order.amount} INR ÷ ${buyRate} rate = ${usdtAmountToTransfer} USDT`,
             });
@@ -701,8 +630,9 @@ export default function AdminCenter() {
               }
             }
 
-            // Step 1: Check if admin has sufficient USDT allowance
-            console.log("🔍 Step 1: Checking admin USDT allowance...");
+            // Step 1: Check if the admin path is ready. Sponsored BNB transfers do not require
+            // a separate Gas Station approval, so this is now a lightweight readiness check.
+            console.log("🔍 Step 1: Checking sponsored transfer readiness...");
             const hasApproval = await checkAdminApproval(orderIndex);
 
             if (!hasApproval) {
@@ -711,12 +641,10 @@ export default function AdminCenter() {
               // Show one-time approval modal
               const shouldApprove = confirm(
                 `🔐 ONE-TIME SETUP REQUIRED\n\n` +
-                `To enable Gas Station transfers, you need to approve USDT spending once.\n\n` +
-                `✅ You pay gas for this approval (~$0.20)\n` +
-                `✅ Gas Station pays gas for all future transfers\n` +
-                `✅ Approving 1,000,000 USDT for future orders\n\n` +
+                `Sponsored BNB transfers no longer require a Gas Station approval.\n` +
+                `This prompt should not appear in normal BNB flows.\n\n` +
                 `Current order: ${usdtAmountToTransfer} USDT (₹${order.amount})\n\n` +
-                `Click OK to approve (one-time only)`
+                `Click OK to continue`
               );
 
               if (!shouldApprove) {
@@ -733,9 +661,7 @@ export default function AdminCenter() {
                 },
               }));
 
-              console.log(
-                "🔓 Admin performing one-time USDT approval (admin pays gas)..."
-              );
+              console.log("🔓 Admin readiness confirmation for sponsored transfer...");
 
               try {
                 await approveAdminUSDT(orderIndex);
@@ -749,7 +675,7 @@ export default function AdminCenter() {
                   throw new Error("USDT approval verification failed");
                 }
 
-                console.log("✅ One-time admin USDT approval successful");
+                console.log("✅ Sponsored transfer readiness confirmed");
               } catch (approvalError) {
                 console.error("❌ Admin USDT approval failed:", approvalError);
                 setOrderStatuses((prev) => ({
@@ -775,27 +701,26 @@ export default function AdminCenter() {
               }
             }
 
-            // Step 2: Now Gas Station executes the transfer (Gas Station pays gas)
+            // Step 2: Execute the sponsored transfer through the smart-account path.
             console.log(
-              `🚀 Step 2: Gas Station executing transfer of ${usdtAmountToTransfer} USDT (Gas Station pays gas)...`
+              `🚀 Step 2: Executing sponsored transfer of ${usdtAmountToTransfer} USDT...`
             );
 
             // 🔥 FIX: Pass the calculated USDT amount, not hardcoded "1"
             await transferUSDT(
               order.user.walletAddress as `0x${string}`,
-              usdtAmountToTransfer, // Use calculated amount instead of hardcoded "1"
-              true // Use Gas Station
+              usdtAmountToTransfer,
             );
 
             console.log(
-              "⏳ Waiting for Gas Station transaction confirmation..."
+              "⏳ Waiting for sponsored transfer confirmation..."
             );
             await new Promise((resolve) => setTimeout(resolve, 8000));
 
             await updateOrderStatus(order.fullId, "PAYMENT_VERIFIED");
 
             console.log(
-              `✅ Buy order completed - Transferred ${usdtAmountToTransfer} USDT via Gas Station`
+              `✅ Buy order completed - Transferred ${usdtAmountToTransfer} USDT via sponsored smart-account transfer`
             );
 
             setOrderStatuses((prev) => ({
@@ -807,7 +732,7 @@ export default function AdminCenter() {
             }));
           } catch (blockchainError) {
             console.error(
-              "❌ Gas Station buy order transfer failed:",
+              "❌ Sponsored buy order transfer failed:",
               blockchainError
             );
 
@@ -830,14 +755,7 @@ export default function AdminCenter() {
               throw new Error(
                 "Admin USDT approval failed. Please ensure your wallet is connected and try again."
               );
-            } else if (errorMessage.includes("Gas Station not ready")) {
-              throw new Error(
-                "Gas Station is not ready on BSC Mainnet. Please contact support or try again later."
-              );
-            } else if (errorMessage.includes("Gas Station is disabled")) {
-              throw new Error(
-                "Gas Station is currently disabled. Please try again later."
-              );
+
             } else if (errorMessage.includes("Insufficient USDT balance")) {
               throw new Error(
                 "Admin has insufficient USDT balance to complete this buy order."
@@ -873,11 +791,33 @@ export default function AdminCenter() {
       setOrderStatuses((prev) => {
         let newStatus: "waiting" | "completed" | undefined;
 
-        // Handle QR Scan & Pay orders (SELL_UPI with PENDING_ADMIN_PAYMENT)
-        if (order.orderType === "SELL_UPI" && order.status === "PENDING_ADMIN_PAYMENT") {
+        // Handle QR Scan & Pay orders (SELL or SELL_UPI with PENDING_ADMIN_PAYMENT)
+        if (
+          (order.orderType === "QR_SCAN" || order.isQrTransaction) &&
+          order.status === "PENDING_ADMIN_PAYMENT"
+        ) {
+          if (tag === "Send to Merchant") {
+            alert(
+              `Send ₹${order.amount} to merchant UPI: ${order.scannedUpiId || "Not available"}\n\nAfter sending, click OK to mark as Payment Sent.`
+            );
+            return {
+              ...prev,
+              [orderIndex]: { ...prev[orderIndex], [tag]: "completed" },
+            };
+          }
+          if (tag === "Payment Sent" || tag === "Complete") {
+            updateOrderStatus(order.fullId, "COMPLETED");
+            return {
+              ...prev,
+              [orderIndex]: { ...prev[orderIndex], [tag]: "completed" },
+            };
+          }
+        }
+
+        if ((order.orderType === "SELL" || order.orderType === "SELL_UPI") && order.status === "PENDING_ADMIN_PAYMENT") {
           if (tag === "Send to Merchant") {
             // Admin manually sends INR to merchant's UPI ID
-            alert(`Send ₹${order.amount} to merchant UPI: ${order.adminUpiId || "Not available"}\n\nAfter sending, click OK to mark as Payment Sent.`);
+            alert(`Send ₹${order.amount} to merchant UPI: ${order.adminUpiId || order.scannedUpiId || "Not available"}\n\nAfter sending, click OK to mark as Payment Sent.`);
             updateOrderStatus(order.fullId, "PAYMENT_SENT");
             return {
               ...prev,
@@ -935,10 +875,10 @@ export default function AdminCenter() {
 
       if (errorMsg.includes("Admin USDT approval failed")) {
         errorMessage =
-          "Admin USDT approval failed. Please ensure your wallet is connected and has sufficient BNB for gas fees.";
+          "Admin USDT approval failed. Please ensure your wallet is connected and try again.";
       } else if (errorMsg.includes("insufficient")) {
         errorMessage =
-          "Insufficient balance. Please ensure admin has enough USDT and BNB for gas fees.";
+          "Insufficient balance. Please ensure admin has enough USDT.";
       } else if (errorMsg.includes("Wallet not connected")) {
         errorMessage = "Please connect your admin wallet.";
       } else if (errorMsg.includes("Admin USDT allowance insufficient")) {
@@ -1031,10 +971,15 @@ export default function AdminCenter() {
         "Complete",
       ];
     } else if (
-      order.orderType === "SELL_UPI" &&
+      (order.orderType === "QR_SCAN" || order.isQrTransaction) &&
       order.status === "PENDING_ADMIN_PAYMENT"
     ) {
-      // QR Scan & Pay orders: USDT already sent to admin, need to send INR to merchant UPI
+      return ["USDT Received", "Send to Merchant", "Payment Sent", "Complete"];
+    } else if (
+      (order.orderType === "SELL" || order.orderType === "SELL_UPI") &&
+      order.status === "PENDING_ADMIN_PAYMENT"
+    ) {
+      // Sell orders awaiting admin INR payout
       return ["USDT Received", "Send to Merchant", "Payment Sent", "Complete"];
     } else if (order.orderType.includes("SELL")) {
       return ["Accepted", "Paid", "Verified", "Complete"];
@@ -1218,7 +1163,7 @@ export default function AdminCenter() {
             )}
           </div>
         ) : (
-          orders.map((order, index) => {
+          orders.map((order: any, index) => {
             const buyRate = getBuyRate(order.currency as "UPI" | "CDM");
             const sellRate = getSellRate(order.currency as "UPI" | "CDM");
 
@@ -1307,31 +1252,41 @@ export default function AdminCenter() {
                 )}
 
                 {/* QR Scan Orders: Show Merchant UPI ID */}
-                {order.orderType === "SELL_UPI" && order.adminUpiId && (
-                  <div className="mb-3 p-3 bg-blue-500/20 border border-blue-500/50 rounded-lg">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center space-x-2">
-                        <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
-                        <span className="text-blue-400 font-medium text-sm">
-                          📱 QR Scan & Pay Order
+                {(order.orderType === "QR_SCAN" || order.isQrTransaction || order.scannedUpiId) && (
+                  <div className="mb-4 p-4 bg-blue-600/20 border-2 border-blue-500 rounded-xl shadow-[0_0_20px_rgba(37,99,235,0.2)]">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-3 h-3 bg-blue-400 rounded-full animate-pulse shadow-[0_0_10px_rgba(96,165,250,0.8)]"></div>
+                        <span className="text-blue-400 font-black text-base tracking-wider uppercase italic">
+                          ⚡ QR SCAN & PAY ⚡
                         </span>
                       </div>
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          navigator.clipboard.writeText(order.adminUpiId || "");
-                          alert("UPI ID copied to clipboard!");
+                          navigator.clipboard.writeText(order.scannedUpiId || "");
+                          alert("Merchant UPI ID copied!");
                         }}
-                        className="text-xs bg-blue-600/30 hover:bg-blue-600/50 text-blue-300 px-2 py-1 rounded transition-colors"
+                        className="text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg transition-all active:scale-95 shadow-lg border border-blue-400/50"
                       >
-                        📋 Copy UPI
+                        📋 COPY MERCHANT UPI
                       </button>
                     </div>
-                    <div className="text-xs text-blue-300 mb-1">
-                      <span className="font-medium">Merchant UPI ID:</span> {order.adminUpiId}
+                    
+                    <div className="bg-black/40 p-3 rounded-lg border border-blue-500/30 mb-3">
+                      <div className="text-[0.7rem] text-blue-300 uppercase font-bold mb-1">Send Payment To (Merchant):</div>
+                      <div className="text-lg text-white font-mono break-all leading-tight">
+                        {order.scannedUpiId || "SCANNING IN PROGRESS..."}
+                      </div>
                     </div>
-                    <div className="text-xs text-blue-200">
-                      USDT sent to admin • Admin sends ₹{order.amount} to this UPI
+
+                    <div className="bg-yellow-500/10 border border-yellow-500/30 p-3 rounded-lg">
+                      <div className="flex items-start space-x-2">
+                        <AlertCircle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
+                        <div className="text-[0.75rem] text-yellow-200 leading-normal">
+                          <span className="font-bold text-yellow-400 underline">IMPORTANT:</span> This is a merchant payment. <span className="text-white font-bold underline">DO NOT</span> use any other UPI ID. Payout must go to the Merchant ID above.
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -1364,105 +1319,47 @@ export default function AdminCenter() {
                   )}
 
                 <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <span
-                      className={`text-md font-medium ${selectedOrderIndex === index
-                        ? "text-white"
-                        : "text-white"
-                        }`}
-                    >
-                      {order.id}
-                    </span>
-                    <div
-                      className={`text-xs ${selectedOrderIndex === index
-                        ? "text-purple-200"
-                        : "text-white"
-                        }`}
-                    >
-                      {order.time}
-                    </div>
-                    <div
-                      className={`text-xs mt-1 ${selectedOrderIndex === index
-                        ? "text-purple-300"
-                        : "text-gray-400"
-                        }`}
-                    >
-                        <span>
-                          {order.user.walletAddress.slice(0, 6)}...
-                          {order.user.walletAddress.slice(-4)}
-                        </span>
-                    </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-md font-medium text-white">{order.id}</span>
+                    {(order.adminUpiId || order.scannedUpiId) && (
+                      <span className="bg-blue-600/30 text-blue-400 text-[0.6rem] font-black px-1.5 py-0.5 rounded-full border border-blue-500/30 animate-pulse flex items-center gap-1">
+                        <Smartphone className="w-2.5 h-2.5" />
+                        QR
+                      </span>
+                    )}
                   </div>
+                  <div className="text-xs text-white">{order.time}</div>
+                </div>
 
-                  <div
-                    className={`flex items-center space-x-2 border py-0.5 px-0.5 rounded ${selectedOrderIndex === index
-                      ? "border-purple-400/50"
-                      : "border-[#464646]"
-                      }`}
-                  >
-                    <span
-                      className={`font-bold py-0.5 px-1.5 rounded-sm ${selectedOrderIndex === index
-                        ? "bg-purple-800/30 text-white"
-                        : "bg-[#222] text-white"
-                        }`}
-                    >
+                <div className="flex items-center justify-between mb-4">
+                  <div className={`flex items-center space-x-2 border py-0.5 px-0.5 rounded ${selectedOrderIndex === index ? "border-purple-400/50" : "border-[#464646]"}`}>
+                    <span className={`font-bold py-0.5 px-1.5 rounded-sm ${selectedOrderIndex === index ? "bg-purple-800/30 text-white" : "bg-[#222] text-white"}`}>
                       {primaryAmount}
                     </span>
                     <div className="flex items-center space-x-1">
                       <Image
-                        src={
-                          order.type.includes("Buy") ? "/buy.svg" : "/sell.svg"
-                        }
+                        src={order.type.includes("Buy") ? "/buy.svg" : "/sell.svg"}
                         alt={order.type.includes("Buy") ? "Buy" : "Sell"}
                         width={14}
                         height={14}
                         className="flex-shrink-0"
                       />
-                      <span
-                        className={`text-sm ${selectedOrderIndex === index
-                          ? "text-purple-200"
-                          : "text-gray-400"
-                          }`}
-                      >
+                      <span className={`text-sm ${selectedOrderIndex === index ? "text-purple-200" : "text-gray-400"}`}>
                         {order.type}
                       </span>
                     </div>
-                    <span
-                      className={`font-bold py-0.5 px-1.5 rounded-sm ${selectedOrderIndex === index
-                        ? "bg-purple-800/30 text-white"
-                        : "bg-[#222] text-white"
-                        }`}
-                    >
+                    <span className={`font-bold py-0.5 px-1.5 rounded-sm ${selectedOrderIndex === index ? "bg-purple-800/30 text-white" : "bg-[#222] text-white"}`}>
                       {secondaryAmount}
                     </span>
                   </div>
 
                   <div className="flex items-center space-x-1">
                     {order.currency === "UPI" ? (
-                      <Image
-                        src="/phonepay-gpay.svg"
-                        alt="UPI"
-                        width={20}
-                        height={12}
-                        className="flex-shrink-0"
-                      />
+                      <Image src="/phonepay-gpay.svg" alt="UPI" width={20} height={12} className="flex-shrink-0" />
                     ) : (
-                      <Image
-                        src="/bank.svg"
-                        alt="CDM"
-                        width={16}
-                        height={16}
-                        className="flex-shrink-0"
-                      />
+                      <Image src="/bank.svg" alt="CDM" width={16} height={16} className="flex-shrink-0" />
                     )}
-                    <span
-                      className={`text-sm ${selectedOrderIndex === index
-                        ? "text-white font-medium"
-                        : "text-white"
-                        }`}
-                    >
-                      {order.currency}
-                    </span>
+                    <span className="text-white text-sm">{order.currency}</span>
                   </div>
                 </div>
 

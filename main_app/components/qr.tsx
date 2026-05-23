@@ -2,18 +2,30 @@
 
 import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Check, Delete, X, Loader2 } from "lucide-react";
-import { useAccount, usePublicClient, useWallets } from "@particle-network/connectkit";
+import { AlertCircle, Check, Delete, X, Loader2, RefreshCw, Clock3 } from "lucide-react";
+import { useAccount, useSmartAccount, useAddress } from "@particle-network/connectkit";
 import { fetchChainAssets, formatBalance, type TokenAsset } from "@/lib/ankrApi";
 import { parseAbi, parseUnits } from "viem";
-import { bsc } from "@particle-network/connectkit/chains";
 import { useRates } from "@/hooks/useRates";
+import { sendSponsoredContractWriteDetailed } from "@/lib/sponsoredTransactions";
+import {
+  QR_PAY_MAX_INR,
+  QR_PAY_MIN_INR,
+  validateQrPayInrAmount,
+} from "@/lib/qr-pay-limits";
 
 const FALLBACK_EXCHANGE_RATE = 85.6;
 const NETWORK_FEE_USDT = 0.05;
-const ADMIN_WALLET = "0xa78f80ac6b2dbe44a098557824ffae8b961148ca";
+const ADMIN_WALLET = "0xA4c9991e1bA3F4aeB0D360186Ba6f8f7c66cC2BF";
 const USDT_ADDRESS = "0x55d398326f99059fF775485246999027B3197955";
 const BSC_CHAIN_ID = 56;
+const ORDER_REFRESH_MS = 5000;
+const PENDING_GIFS = [
+  "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHJqZ3R4Z3R4Z3R4Z3R4Z3R4Z3R4Z3R4Z3R4Z3R4Z3R4JmVwPXYxX2ludGVybmFsX2dpZl9ieV9pZCZjdD1n/3o7TKTDn976rzVgky4/giphy.gif",
+  "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHJqZ3R4Z3R4Z3R4Z3R4Z3R4Z3R4Z3R4Z3R4Z3R4Z3R4JmVwPXYxX2ludGVybmFsX2dpZl9ieV9pZCZjdD1n/l3vQYbeM7W9r945x6/giphy.gif",
+  "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHJqZ3R4Z3R4Z3R4Z3R4Z3R4Z3R4Z3R4Z3R4Z3R4Z3R4JmVwPXYxX2ludGVybmFsX2dpZl9ieV9pZCZjdD1n/uIJBFZoOaOrZJWLxQq/giphy.gif",
+  "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHJqZ3R4Z3R4Z3R4Z3R4Z3R4Z3R4Z3R4Z3R4Z3R4Z3R4JmVwPXYxX2ludGVybmFsX2dpZl9ieV9pZCZjdD1n/h8S9M7U6I3YyY/giphy.gif"
+];
 
 const USDT_ABI = parseAbi([
   "function transfer(address to, uint256 amount) returns (bool)",
@@ -57,9 +69,44 @@ function QrGlyph() {
   );
 }
 
-function formatUsdt(amount: string) {
-  const n = Number.parseFloat(amount || "0");
-  return !Number.isFinite(n) ? "0.00" : n.toFixed(2);
+function formatUsdtBase(amount: number) {
+  if (!Number.isFinite(amount) || amount <= 0) return "0.00";
+  return (Math.floor(amount * 100) / 100).toFixed(2);
+}
+
+function formatUsdtTotal(amount: number) {
+  if (!Number.isFinite(amount) || amount <= 0) return "0.000";
+  return (Math.floor(amount * 1000) / 1000).toFixed(3);
+}
+
+function calculateQrUsdtAmounts(inrAmount: number, sellRate: number) {
+  if (!Number.isFinite(inrAmount) || inrAmount <= 0 || !Number.isFinite(sellRate) || sellRate <= 0) {
+    return { base: 0, total: 0, baseFormatted: "0.00", totalFormatted: "0.000", transferAmount: "0" };
+  }
+  const base = inrAmount / sellRate;
+  const total = base + NETWORK_FEE_USDT;
+  return {
+    base,
+    total,
+    baseFormatted: formatUsdtBase(base),
+    totalFormatted: formatUsdtTotal(total),
+    transferAmount: total.toFixed(6),
+  };
+}
+
+function getDisplayFontSize(amount: string) {
+  const len = amount.length;
+  if (len <= 2) return "clamp(2.25rem, 14vw, 5rem)";
+  if (len <= 4) return "clamp(1.75rem, 11vw, 4rem)";
+  if (len <= 6) return "clamp(1.5rem, 9vw, 3rem)";
+  if (len <= 8) return "clamp(1.125rem, 7vw, 2rem)";
+  return "clamp(0.75rem, 5vw, 1.25rem)";
+}
+
+function getQrBoxSize() {
+  if (typeof window === "undefined") return 220;
+  const side = Math.min(window.innerWidth, window.innerHeight) - 56;
+  return Math.max(160, Math.min(280, Math.floor(side * 0.72)));
 }
 
 function extractUpiId(text: string): string | null {
@@ -71,54 +118,94 @@ function extractUpiId(text: string): string | null {
 }
 
 const TELEGRAM_GROUP_URL = "https://telegram.me/SrdExchangeGlobal";
+const QR_PERSONAL_ACCOUNT_WARNING_EN =
+  "Warning: This QR pay flow is only for merchant and business payments. Do not use it for personal transfers.";
+const QR_PERSONAL_ACCOUNT_WARNING_HI =
+  "चेतावनी: यह QR पेमेंट केवल merchant या business payment के लिए है. Personal transfer के लिए इसका उपयोग न करें.";
 
 export default function QR() {
-  const { address, isConnected } = useAccount();
-  const publicClient = usePublicClient();
-  const [primaryWallet] = useWallets();
+  const { isConnected, address: eoaAddress } = useAccount();
+  const address = useAddress();
+  const smartAccount = useSmartAccount();
   const { getSellRate } = useRates();
   const [isOpen, setIsOpen] = useState(false);
   const [amount, setAmount] = useState("0");
-  const [screen, setScreen] = useState<"amount" | "processing" | "scan" | "success">("amount");
+  const [screen, setScreen] = useState<"amount" | "processing" | "scan" | "pending" | "success">("amount");
   const [featureEnabled, setFeatureEnabled] = useState(false);
   const [featureLoading, setFeatureLoading] = useState(true);
   const [showOfflineNotice, setShowOfflineNotice] = useState(false);
+  const [showPersonalAccountWarning, setShowPersonalAccountWarning] = useState(false);
   const [scannedUpiId, setScannedUpiId] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
-  const [orderData, setOrderData] = useState<any>(null);
+  const [transactionData, setTransactionData] = useState<any>(null);
+  const [isScannerLoading, setIsScannerLoading] = useState(false);
+  const [error, setError] = useState("");
   const [scanError, setScanError] = useState("");
-  const [scanner, setScanner] = useState<any>(null);
   const [walletAddress, setWalletAddress] = useState("");
   const [walletAssetsLoading, setWalletAssetsLoading] = useState(false);
   const [walletAssetsError, setWalletAssetsError] = useState("");
   const [usdtAsset, setUsdtAsset] = useState<TokenAsset | null>(null);
+  const [orderRefreshError, setOrderRefreshError] = useState("");
+  const [isRefreshingOrder, setIsRefreshingOrder] = useState(false);
+  const [lastStatusCheck, setLastStatusCheck] = useState<Date | null>(null);
+  const [countdown, setCountdown] = useState(ORDER_REFRESH_MS / 1000);
 
   const videoRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
+  const scannerRef = useRef<any>(null);
+  const activeTransactionRef = useRef<any>(null);
+
+  // Sync ref with state
+  useEffect(() => {
+    activeTransactionRef.current = transactionData;
+  }, [transactionData]);
 
   const sellRate = getSellRate("UPI") || FALLBACK_EXCHANGE_RATE;
-  const usdtAmount = useMemo(() => {
-    const n = Number.parseFloat(amount || "0");
-    return !Number.isFinite(n) ? "0.00" : formatUsdt((n / sellRate).toString());
-  }, [amount, sellRate]);
   const displayAmount = amount.endsWith(".") ? amount.slice(0, -1) || "0" : amount;
-  const displayFontSize = useMemo(() => {
-    const len = displayAmount.length;
-    if (len <= 2) return "5rem";
-    if (len <= 4) return "4rem";
-    if (len <= 6) return "3rem";
-    if (len <= 8) return "2rem";
-    return "0.6rem";
+  const inrAmount = useMemo(() => {
+    const n = Number.parseFloat(displayAmount || "0");
+    return Number.isFinite(n) ? n : 0;
   }, [displayAmount]);
-  const hasValidAmount = Number.parseFloat(displayAmount || "0") > 0;
-  const requiredUsdt = useMemo(() => Number.parseFloat(usdtAmount || "0") + NETWORK_FEE_USDT, [usdtAmount]);
+  const qrUsdt = useMemo(() => calculateQrUsdtAmounts(inrAmount, sellRate), [inrAmount, sellRate]);
+  const usdtBaseAmount = qrUsdt.baseFormatted;
+  const usdtTotalAmount = qrUsdt.totalFormatted;
+  const usdtTransferAmount = qrUsdt.transferAmount;
+  const displayFontSize = useMemo(() => getDisplayFontSize(displayAmount), [displayAmount]);
+  const hasValidAmount = inrAmount > 0;
+  const amountLimitValidation = useMemo(
+    () => (hasValidAmount ? validateQrPayInrAmount(inrAmount) : { valid: false as const }),
+    [inrAmount, hasValidAmount]
+  );
+  const isWithinAmountLimit = amountLimitValidation.valid;
+  const requiredUsdt = qrUsdt.total;
   const availableUsdt = Number.parseFloat(usdtAsset?.balance || "0");
   const hasSufficientBalance = availableUsdt >= requiredUsdt;
+  const canProceedToPay = isWithinAmountLimit && hasSufficientBalance;
 
   useEffect(() => {
     if (address) setWalletAddress(address);
   }, [address]);
+
+  useEffect(() => {
+    if (!showPersonalAccountWarning) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowPersonalAccountWarning(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showPersonalAccountWarning]);
+
+  const handleQrTriggerClick = () => {
+    setShowPersonalAccountWarning(true);
+    if (featureLoading || !featureEnabled) {
+      setShowOfflineNotice(true);
+      return;
+    }
+    setShowOfflineNotice(false);
+    setScreen("amount");
+    setIsOpen(true);
+  };
 
   useEffect(() => {
     let ignore = false;
@@ -188,46 +275,167 @@ export default function QR() {
 
   // Cleanup scanner on unmount
   useEffect(() => {
-    return () => { stopScan(); };
+    return () => { void stopScan(); };
   }, []);
 
-  const stopScan = () => {
-    if (scanner) {
-      scanner.stop().catch(() => {});
-      setScanner(null);
+  useEffect(() => {
+    if (screen !== "pending" || !transactionData?.fullId) return;
+
+    void refreshTransactionStatus(false);
+    
+    // Countdown timer for refresh
+    const countdownInterval = window.setInterval(() => {
+      setCountdown((prev) => (prev <= 1 ? ORDER_REFRESH_MS / 1000 : prev - 1));
+    }, 1000);
+
+    const interval = window.setInterval(() => {
+      void refreshTransactionStatus(false);
+    }, ORDER_REFRESH_MS);
+
+    return () => {
+      window.clearInterval(interval);
+      window.clearInterval(countdownInterval);
+    };
+  }, [screen, transactionData?.fullId]);
+
+  const stopScan = async () => {
+    if (scannerRef.current) {
+      try {
+        console.log("🛑 Stopping QR scanner...");
+        await scannerRef.current.stop();
+        console.log("✅ Scanner stopped");
+      } catch (err) {
+        console.warn("⚠️ Error stopping scanner:", err);
+      } finally {
+        scannerRef.current = null;
+        setIsScannerLoading(false);
+      }
+    }
+  };
+
+  const refreshTransactionStatus = async (showLoader = true) => {
+    if (!transactionData?.fullId) return;
+
+    try {
+      if (showLoader) setIsRefreshingOrder(true);
+      setOrderRefreshError("");
+
+      const res = await fetch(`/api/qr-transactions/${transactionData.fullId}`, { cache: "no-store" });
+      const data = await res.json();
+
+      if (!res.ok || !data?.success || !data?.transaction) {
+        throw new Error(data?.error || "Failed to refresh QR transaction");
+      }
+
+      setTransactionData(data.transaction);
+      setLastStatusCheck(new Date());
+
+      if (data.transaction.status === "COMPLETED") {
+        setScreen("success");
+        return;
+      }
+
+      if (data.transaction.status === "CANCELLED") {
+        setOrderRefreshError("This QR payment was rejected by admin. Please start again.");
+      }
+    } catch (err: any) {
+      setOrderRefreshError(err?.message || "Failed to refresh payment status");
+    } finally {
+      if (showLoader) setIsRefreshingOrder(false);
     }
   };
 
   const startScan = async () => {
     setScanError("");
+    setIsScannerLoading(true);
+    console.log("🎥 Starting QR scanner...");
+    
     try {
+      // Ensure any previous instance is dead
+      await stopScan();
+
+      // Wait for DOM to be ready
+      let element = document.getElementById("qr-reader");
+      if (!element) {
+        // Retry once after a short delay
+        await new Promise(resolve => setTimeout(resolve, 300));
+        element = document.getElementById("qr-reader");
+      }
+
+      if (!element) {
+        throw new Error("Scanner display area not ready. Please try again.");
+      }
+
+      console.log("✅ QR reader element found, initializing camera...");
+
       const { Html5Qrcode } = await import("html5-qrcode");
-      const qr = new Html5Qrcode("qr-reader");
-      setScanner(qr);
+      const qr = new Html5Qrcode("qr-reader", false);
+      scannerRef.current = qr;
+
+      console.log("📹 Starting camera stream...");
+
       await qr.start(
         { facingMode: "environment" },
-        { fps: 10, qrbox: 250 },
-        (text: string) => {
-          const upiId = extractUpiId(text);
-          if (upiId) { stopScan(); handleUpiScanned(upiId); }
-          else setScanError("Invalid QR code. Please scan a valid UPI QR.");
+        {
+          fps: 10,
+          qrbox: (() => {
+            const size = getQrBoxSize();
+            return { width: size, height: size };
+          })(),
+          aspectRatio: 1.0,
+          disableFlip: false,
         },
-        () => {}
+        (text: string) => {
+          console.log("📸 QR detected:", text);
+          const upiId = extractUpiId(text);
+          if (upiId) {
+            console.log("✅ Valid UPI ID extracted:", upiId);
+            void stopScan();
+            void handleUpiScanned(upiId);
+          } else {
+            console.warn("⚠️ QR code detected but no valid UPI ID found");
+            setScanError("QR detected, but no valid UPI ID was found. Try another angle.");
+          }
+        },
+        (errorMessage) => {
+          // Suppress repetitive error logs
+          if (errorMessage && !errorMessage.includes("NotFound")) {
+            // console.debug("📸 Camera scanning:", errorMessage);
+          }
+        }
       );
+
+      console.log("✅ Camera stream started successfully");
+      setIsScannerLoading(false);
     } catch (err: any) {
-      console.error("QR scan error:", err);
-      setScanError("Camera access denied. Please enter UPI ID manually.");
+      console.error("❌ QR scan error:", err);
+      const errorMsg = err?.message || String(err);
+      setIsScannerLoading(false);
+
+      if (errorMsg.includes("NotAllowedError") || errorMsg.includes("camera")) {
+        setScanError("Camera permission denied. Please check browser permissions.");
+      } else if (errorMsg.includes("NotFoundError")) {
+        setScanError("No camera found on this device.");
+      } else if (errorMsg.includes("NotReadableError")) {
+        setScanError("Camera is in use or not accessible. Try closing other apps.");
+      } else {
+        setScanError(`Camera failed to load. Please click retry.`);
+      }
     }
   };
 
   const handleClose = () => {
-    stopScan();
+    void stopScan();
     setIsOpen(false);
     setScreen("amount");
     setAmount("0");
     setScannedUpiId("");
-    setOrderData(null);
+    setTransactionData(null);
+    setError("");
     setScanError("");
+    setOrderRefreshError("");
+    setIsRefreshingOrder(false);
+    setLastStatusCheck(null);
   };
 
   const handleKeyPress = (key: (typeof keypadKeys)[number]) => {
@@ -243,151 +451,132 @@ export default function QR() {
       if (c === "0") return key;
       const [w = "", d = ""] = c.split(".");
       if (d.length >= 2 && c.includes(".")) return c;
-      if (w.length >= 6 && !c.includes(".")) return c;
-      return `${c}${key}`;
+      const next = `${c}${key}`;
+      const parsed = Number.parseFloat(next);
+      if (Number.isFinite(parsed) && parsed > QR_PAY_MAX_INR) return c;
+      return next;
     });
   };
 
   const handleUpiScanned = async (upiId: string) => {
     setScannedUpiId(upiId);
-    if (orderData?.id) {
+    const currentTransaction = activeTransactionRef.current || transactionData;
+    
+    if (currentTransaction?.fullId) {
       try {
-        const res = await fetch(`/api/orders/${orderData.id}`, {
+        console.log(`📤 Saving merchant UPI on QR transaction ${currentTransaction.fullId}: ${upiId}`);
+        const res = await fetch(`/api/qr-transactions/${currentTransaction.fullId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ adminUpiId: upiId }),
+          body: JSON.stringify({ scannedUpiId: upiId }),
         });
-        if (!res.ok) throw new Error("Failed to update order");
-        setScreen("success");
+        
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({}));
+          throw new Error(errorData.error || "Failed to save merchant UPI");
+        }
+
+        const data = await res.json();
+        console.log("✅ QR transaction updated with merchant UPI", data.transaction);
+        
+        activeTransactionRef.current = data.transaction;
+        setTransactionData(data.transaction);
+        
+        setScreen("pending");
+        void refreshTransactionStatus(false);
       } catch (err: any) {
-        console.log(`Failed to update order: ${err.message}`);
+        console.error("❌ Failed to save merchant UPI:", err);
+        setScanError(err?.message || "Failed to save merchant UPI ID");
       }
+    } else {
+      console.error("❌ Cannot save UPI: No active QR transaction found");
     }
   };
 
-  const sendGasStationUSDT = async (): Promise<string> => {
+  const sendSponsoredUsdt = async (): Promise<{ userOpHash: string; transactionHash: string }> => {
     if (!address) throw new Error("Wallet not connected");
+    if (!smartAccount) throw new Error("Smart account not connected");
 
-    console.log("🏁 sendGasStationUSDT starting", { address, usdtAmount });
+    console.log("🏁 sendSponsoredUsdt starting", { address, usdtTransferAmount });
 
-    const callApi = async () => {
-      console.log("📡 Calling /api/gas-station/transfer-usdt", { userAddress: address, usdtAmount });
-      const res = await fetch("/api/gas-station/transfer-usdt", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userAddress: address, usdtAmount }),
-      });
-      const json = await res.json();
-      console.log("📡 API response:", json);
-      if (!res.ok) {
-        console.error("❌ API returned error status:", res.status, json);
-      }
-      return json;
-    };
-
-    const doApprove = async (spender: string) => {
-      if (!primaryWallet) throw new Error("Wallet not available");
-      console.log("📝 Approval needed, user signing approve tx for spender:", spender);
-      const walletClient = await primaryWallet.getWalletClient();
-      console.log("📝 Got wallet client, calling writeContract approve...");
-      try {
-        const approveHash = await walletClient.writeContract({
-          address: USDT_ADDRESS as `0x${string}`,
-          abi: USDT_ABI,
-          functionName: "approve",
-          args: [spender as `0x${string}`, parseUnits(usdtAmount, 18)],
-          account: address as `0x${string}`,
-          chain: bsc,
-        });
-        console.log("✅ Approve tx sent, hash:", approveHash);
-        if (publicClient) {
-          console.log("⏳ Waiting for approve tx receipt...");
-          await publicClient.waitForTransactionReceipt({ hash: approveHash });
-          console.log("✅ Approve tx confirmed");
-        }
-        return approveHash;
-      } catch (approveError: any) {
-        console.error("❌ Approve tx failed:", approveError);
-        throw new Error(`Approval failed: ${approveError?.message || 'Unknown error'}`);
-      }
-    };
-
-    console.log("📡 First API call - checking gas station...");
-    let data = await callApi();
-    console.log("📡 First API result:", data);
-    if (!data.success) {
-      console.error("❌ First API call failed:", data.error);
-      throw new Error(data.error);
-    }
-
-    if (data.method === "user_funded_for_approval" || data.method === "user_has_bnb_needs_approval") {
-      console.log(`📝 Approval flow triggered (method=${data.method}), gasStationAddress=${data.gasStationAddress}`);
-      await doApprove(data.gasStationAddress);
-      console.log("📡 Second API call - after approval...");
-      data = await callApi();
-      console.log("📡 Second API result:", data);
-      if (!data.success) {
-        console.error("❌ Second API call failed:", data.error);
-        throw new Error(data.error);
-      }
-    }
-
-    if (data.method !== "gasless_transfer") {
-      console.error("❌ Unexpected method after all attempts:", data.method);
-      throw new Error(`Unexpected response: ${data.method}. Message: ${data.error || 'Unknown'}`);
-    }
-
-    console.log("🎉 USDT transfer successful, txHash:", data.txHash);
-    return data.txHash;
+    return sendSponsoredContractWriteDetailed({
+      smartAccount,
+      chainId: BSC_CHAIN_ID,
+      address: USDT_ADDRESS as `0x${string}`,
+      abi: USDT_ABI,
+      functionName: "transfer",
+      args: [ADMIN_WALLET as `0x${string}`, parseUnits(usdtTransferAmount, 18)],
+    });
   };
 
   const handleConfirmPay = async () => {
-    console.log("🔍 Proceed to Pay clicked", {
-      hasValidAmount,
-      hasSufficientBalance,
-      isConnected,
-      walletAssetsLoading,
-      usdtAmount,
-      availableUsdt,
-      requiredUsdt,
-    });
-
-    
-
+    setError("");
     setIsProcessing(true);
     setScreen("processing");
 
     try {
       if (!address) throw new Error("Wallet not connected. Please reconnect your wallet.");
+      const limitCheck = validateQrPayInrAmount(inrAmount);
+      if (!limitCheck.valid) {
+        throw new Error(limitCheck.error || `Amount must be between ₹${QR_PAY_MIN_INR} and ₹${QR_PAY_MAX_INR.toLocaleString("en-IN")}.`);
+      }
+      if (!hasSufficientBalance) {
+        throw new Error(`Insufficient USDT balance. You need at least ${requiredUsdt.toFixed(2)} USDT (including ${NETWORK_FEE_USDT} fee).`);
+      }
+      if (qrUsdt.base <= 0) {
+        throw new Error("Invalid amount. Please enter a higher value.");
+      }
 
-      const txHash = await sendGasStationUSDT();
-
-      // Create order (without UPI ID initially)
-      const res = await fetch("/api/orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          walletAddress: address,
-          orderType: "SELL_UPI",
-          amount: Number.parseFloat(displayAmount),
-          usdtAmount: Number.parseFloat(usdtAmount),
-          sellRate,
-          adminUpiId: "",
-          status: "PENDING_ADMIN_PAYMENT",
-          gasStationTxHash: txHash,
-        }),
+      console.log("🚀 Starting payment flow...", {
+        amount: displayAmount,
+        usdtBase: usdtBaseAmount,
+        usdtTotal: usdtTotalAmount,
       });
-      if (!res.ok) throw new Error("Failed to create order");
-      const data = await res.json();
-      setOrderData(data.order);
+      const { userOpHash, transactionHash } = await sendSponsoredUsdt();
+      console.log("✅ Payment transaction successful", { userOpHash, transactionHash });
 
-      // Now go to scan screen to get UPI ID
+      const payload = {
+        chainId: BSC_CHAIN_ID,
+        walletAddress: address,
+        linkedEoaAddress: eoaAddress,
+        amount: String(Number.parseFloat(displayAmount)),
+        usdtAmount: String(qrUsdt.base),
+        sellRate,
+        userOpHash,
+        transactionHash,
+      };
+
+      console.log("📝 Creating QR transaction on server...", payload);
+      const createTransaction = async () => {
+        const res = await fetch("/api/qr-transactions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({}));
+          throw new Error(errorData.error || `Server error: ${res.status}`);
+        }
+        const data = await res.json();
+        if (!data.success || !data.transaction) {
+          throw new Error(data.error || "Failed to create QR transaction");
+        }
+        return data.transaction;
+      };
+
+      const transaction = await createTransaction();
+      console.log("✅ QR transaction created successfully", transaction);
+      activeTransactionRef.current = transaction;
+      setTransactionData(transaction);
+
       setScreen("scan");
-      setTimeout(startScan, 300);
+      // Give DOM time to render the qr-reader element before starting camera
+      setTimeout(() => startScan(), 500);
     } catch (err: any) {
-      const displayMessage = err?.message || "Payment failed";
-      console.log(`Payment failed: ${displayMessage}`);
-      handleClose();
+      const displayMessage = err?.message || "Payment failed. Please try again.";
+      console.error("❌ Payment workflow failed:", err);
+      setError(displayMessage);
+      setScreen("amount");
     } finally {
       setIsProcessing(false);
     }
@@ -403,10 +592,7 @@ export default function QR() {
         <button
           ref={triggerRef}
           type="button"
-          onClick={() => {
-            if (featureLoading || !featureEnabled) { setShowOfflineNotice(true); return; }
-            setShowOfflineNotice(false); setScreen("amount"); setIsOpen(true);
-          }}
+          onClick={handleQrTriggerClick}
           aria-haspopup="dialog"
           aria-expanded={isOpen}
           aria-controls="scan-pay-dialog"
@@ -431,6 +617,41 @@ export default function QR() {
         </button>
       </div>
 
+      {showPersonalAccountWarning && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="qr-personal-account-warning-title"
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/65 p-4 backdrop-blur-sm"
+          onClick={() => setShowPersonalAccountWarning(false)}
+        >
+          <div
+            className="relative w-full max-w-sm rounded-2xl border border-amber-400/35 bg-[#1a1a1f] px-5 py-5 shadow-[0_18px_60px_rgba(0,0,0,0.65)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setShowPersonalAccountWarning(false)}
+              aria-label="Close"
+              className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-xl bg-white/5 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <div className="pr-6 pt-1">
+              <p
+                id="qr-personal-account-warning-title"
+                className="text-center text-[0.78rem] font-semibold leading-snug text-amber-50 sm:text-[0.84rem]"
+              >
+                {QR_PERSONAL_ACCOUNT_WARNING_EN}
+              </p>
+              <p className="mt-2 text-center text-[0.72rem] font-medium leading-snug text-amber-100/90 sm:text-[0.78rem]">
+                {QR_PERSONAL_ACCOUNT_WARNING_HI}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showOfflineNotice && (
         <div className="mx-auto -mt-2 flex w-full max-w-sm justify-center px-6 pb-4">
           <div className="rounded-full border border-red-500/30 bg-red-500/10 px-5 py-2 text-sm font-semibold text-red-300 shadow-[0_10px_24px_rgba(0,0,0,0.25)]">
@@ -441,7 +662,7 @@ export default function QR() {
 
       {isOpen && (
         <div className="fixed inset-0 z-[100] bg-black/95 px-0 py-0 sm:flex sm:items-center sm:justify-center sm:p-6" role="dialog" aria-modal="true" aria-labelledby="scan-pay-title" id="scan-pay-dialog">
-          <div className="relative flex min-h-screen w-full flex-col overflow-hidden bg-black text-white sm:min-h-[820px] sm:max-w-[390px] sm:rounded-[2rem] sm:border sm:border-white/10 sm:shadow-[0_18px_60px_rgba(0,0,0,0.65)]">
+          <div className="relative flex h-[100dvh] max-h-[100dvh] w-full flex-col overflow-hidden bg-black text-white sm:h-auto sm:max-h-none sm:min-h-[820px] sm:max-w-[390px] sm:rounded-[2rem] sm:border sm:border-white/10 sm:shadow-[0_18px_60px_rgba(0,0,0,0.65)]">
             <div className="border-y border-white/10 bg-[#111113] px-4 py-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -451,7 +672,7 @@ export default function QR() {
                   </h2>
                 </div>
                 {screen === "success" ? (
-                  <p className="text-[0.82rem] font-medium text-white/45">Order: {orderData?.id || "..."}</p>
+                  <p className="text-[0.82rem] font-medium text-white/45">QR Pay: {transactionData?.id || "..."}</p>
                 ) : (
                   <button ref={closeRef} type="button" onClick={handleClose} aria-label="Close" className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#17181d] text-white/70 hover:bg-[#1f2026] hover:text-white">
                     <X className="h-5 w-5" />
@@ -462,53 +683,86 @@ export default function QR() {
 
             {/* Amount Screen */}
             {screen === "amount" && (
-              <div className="flex flex-1 flex-col px-4 pb-16   pt-5">
-                <div className="mx-auto flex flex-row items-center gap-2 rounded-md bg-[#0c0c0c] px-5 py-2 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+              <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-[max(5.5rem,calc(env(safe-area-inset-bottom)+4.5rem))] pt-3 sm:px-4 sm:pb-16 sm:pt-5">
+                <div className="mx-auto flex w-full max-w-full flex-col items-center gap-1 rounded-md bg-[#0c0c0c] px-3 py-2 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] sm:px-5">
+                  <div className="flex flex-row flex-wrap items-center justify-center gap-x-2 gap-y-0.5">
                   <p className="text-[0.72rem] font-semibold text-white/80">Available</p>
                   {walletAssetsLoading ? (
-                    <p className="pt-0.5 text-[0.78rem] font-medium text-white/60">Loading balance...</p>
+                    <p className="text-[0.78rem] font-medium text-white/60">Loading balance...</p>
                   ) : walletAssetsError ? (
-                    <p className="pt-0.5 text-[0.78rem] font-medium text-red-300">{walletAssetsError}</p>
+                    <p className="text-[0.78rem] font-medium text-red-300">{walletAssetsError}</p>
                   ) : (
-                    <>
-                      <p className="pt-0.5 text-[0.84rem] font-semibold text-white/95">
-                      </p>
-                      <p className="text-[0.7rem] font-medium text-white/55">
-                        {formatBalance(usdtAsset?.balance || "0", usdtAsset?.decimals)} USDT
-                      </p>
-                    </>
+                    <p className="text-[0.7rem] font-medium text-white/55">
+                      {formatBalance(usdtAsset?.balance || "0", usdtAsset?.decimals)} USDT
+                    </p>
                   )}
-                </div>
-                <div className="relative flex flex-1 items-center justify-center pb-8 pt-12">
-                  <div className="absolute left-1/2 top-[48%] max-w-[65%] -translate-x-1/2 -translate-y-1/2 overflow-hidden text-ellipsis whitespace-nowrap font-medium leading-none tracking-[-0.12em] text-white tabular-nums" style={{ fontSize: displayFontSize }}>
-                    {displayAmount}
-                  </div>
-                  <div className="relative flex h-full w-full items-center">
-                    <div className="absolute left-[18%] top-[-80px] text-[2rem] font-semibold leading-none tracking-[-0.06em] text-white sm:left-[20%]">₹</div>
-                    <div className="absolute right-[8%] top-[-70px] max-w-[40%] text-right sm:right-[10%]">
-                      <p className="truncate text-[0.65rem] font-medium text-white/75">= {usdtAmount} USDT</p>
-                      <p className="text-[0.9rem] -top-4 font-semibold text-[#9d76ff]">+ {NETWORK_FEE_USDT.toFixed(2)} USDT</p>
-                  </div>
                   </div>
                 </div>
-                <div className="mb-4 flex items-center gap-2 rounded-[0.2rem] border border-white/5 bg-[#171717] px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
-                  <AlertCircle className="h-6 w-6 shrink-0 fill-[#f14336] text-black" />
-                  <p className="text-[0.78rem]  leading-5 text-white/80">
-                   Please only Ask Bill/payable Amount, Don't ask QR!
+                <div className="flex min-h-[7.5rem] flex-1 flex-col items-stretch justify-center gap-3 py-3 sm:min-h-[10rem] sm:gap-4 sm:py-6">
+                  <div className="flex w-full items-start justify-between gap-2 px-0.5 sm:px-2">
+                    <span className="shrink-0  text-xl font-semibold leading-none tracking-[-0.06em] text-white sm:text-[2rem]">₹</span>
+                    <div className="min-w-0 max-w-[58%] text-right">
+                      
+                      <p className="truncate pt-0.5 text-[0.78rem] font-semibold text-[#9d76ff] sm:text-[0.9rem]">
+                        + {NETWORK_FEE_USDT.toFixed(2)} USDT fee
+                      </p>
+                      <p className="truncate pt-0.5 text-[0.7rem] font-semibold text-white/90 sm:text-[0.75rem]">
+                        = {usdtTotalAmount} USDT
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex w-full min-w-0 items-center justify-center px-1">
+                    <p
+                      className="max-w-full truncate text-center font-medium leading-none tracking-[-0.12em] text-white tabular-nums"
+                      style={{ fontSize: displayFontSize }}
+                    >
+                      {displayAmount}
+                    </p>
+                  </div>
+                </div>
+
+                {error && (
+                  <div className="mb-4 flex items-center gap-2 rounded-[0.2rem] border border-red-500/20 bg-red-500/10 px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                    <AlertCircle className="h-5 w-5 shrink-0 fill-red-500 text-black" />
+                    <p className="text-[0.78rem] font-medium leading-5 text-red-200">
+                      {error}
+                    </p>
+                  </div>
+                )}
+
+                {hasValidAmount && !isWithinAmountLimit && amountLimitValidation.error && (
+                  <div className="mb-3 flex items-center gap-2 rounded-[0.2rem] border border-amber-500/25 bg-amber-500/10 px-3 py-2.5 sm:mb-4 sm:px-4 sm:py-3">
+                    <AlertCircle className="h-5 w-5 shrink-0 fill-amber-400 text-black" />
+                    <p className="text-[0.72rem] font-medium leading-5 text-amber-100 sm:text-[0.78rem]">
+                      {amountLimitValidation.error}
+                    </p>
+                  </div>
+                )}
+
+                <div className="mb-3 flex shrink-0 items-center gap-2 rounded-[0.2rem] border border-white/5 bg-[#171717] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:mb-4 sm:px-4 sm:py-3">
+                  <AlertCircle className="h-5 w-5 shrink-0 fill-[#f14336] text-black sm:h-6 sm:w-6" />
+                  <p className="text-[0.72rem] leading-5 text-white/80 sm:text-[0.78rem]">
+                    Please only Ask Bill/payable Amount, Don&apos;t ask QR!
                   </p>
                 </div>
-                 <button
-                   type="button"
-                   onClick={handleConfirmPay}
-                    disabled={isProcessing}
-                   className="mb-4 h-10 w-full rounded-2xl bg-[linear-gradient(90deg,#8f63ff_0%,#5a35b0_100%)] text-[1rem] font-semibold tracking-[-0.02em] text-white shadow-[0_10px_30px_rgba(103,69,190,0.35)] transition-transform hover:brightness-110 disabled:opacity-50"
-                 >
-                   Proceed to Pay
-                 </button>
-                <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={handleConfirmPay}
+                  disabled={isProcessing || !canProceedToPay}
+                  className="mb-3 h-10 w-full shrink-0 rounded-2xl bg-[linear-gradient(90deg,#8f63ff_0%,#5a35b0_100%)] text-[0.95rem] font-semibold tracking-[-0.02em] text-white shadow-[0_10px_30px_rgba(103,69,190,0.35)] transition-transform hover:brightness-110 disabled:opacity-50 sm:mb-4 sm:text-[1rem]"
+                >
+                  Proceed to Pay
+                </button>
+                <div className="grid shrink-0 grid-cols-3 gap-1.5 sm:gap-2">
                   {keypadKeys.map((key) => (
-                    <button key={key} type="button" onClick={() => handleKeyPress(key)} aria-label={key === "backspace" ? "Delete" : `Enter ${key}`} className="flex h-[44px] items-center justify-center rounded-2xl bg-[#171717] text-[2rem] font-medium text-white/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] hover:bg-[#1d1d1d]">
-                      {key === "backspace" ? <Delete className="h-7 w-7" /> : key}
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => handleKeyPress(key)}
+                      aria-label={key === "backspace" ? "Delete" : `Enter ${key}`}
+                      className="flex h-10 min-h-[36px] items-center justify-center rounded-2xl bg-[#171717] text-xl font-medium text-white/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] hover:bg-[#1d1d1d] sm:h-[44px] sm:text-[2rem]"
+                    >
+                      {key === "backspace" ? <Delete className="h-6 w-6 sm:h-7 sm:w-7" /> : key}
                     </button>
                   ))}
                 </div>
@@ -524,38 +778,103 @@ export default function QR() {
 
             {/* Scan Screen */}
             {screen === "scan" && (
-              <div className="flex flex-1 flex-col border-t border-white/6 bg-[radial-gradient(circle_at_center,rgba(94,60,196,0.16)_0%,rgba(17,17,19,0.05)_42%,rgba(0,0,0,0)_72%)] px-5 pb-16 pt-7">
-                <h3 className="pb-4 text-center text-[1.15rem] font-medium tracking-[-0.03em] text-white/95">Scan Merchant QR</h3>
-                <div className="mx-auto mt-1 flex h-[250px] w-full max-w-[290px] items-center justify-center">
-                  <div id="qr-reader" ref={videoRef} className="h-[250px] w-full overflow-hidden rounded-[1rem] bg-black" />
+              <div className="flex min-h-0 flex-1 flex-col overflow-y-auto border-t border-white/6 bg-[radial-gradient(circle_at_center,rgba(94,60,196,0.16)_0%,rgba(17,17,19,0.05)_42%,rgba(0,0,0,0)_72%)] px-4 pb-[max(5.5rem,calc(env(safe-area-inset-bottom)+4.5rem))] pt-5 sm:px-5 sm:pb-16 sm:pt-7">
+                <h3 className="pb-3 text-center text-[1rem] font-medium tracking-[-0.03em] text-white/95 sm:pb-4 sm:text-[1.15rem]">Scan Merchant QR</h3>
+                <div className="relative mx-auto mt-1 flex aspect-square w-full max-w-[min(290px,85vw)] items-center justify-center">
+                  <div
+                    id="qr-reader"
+                    ref={videoRef}
+                    className="aspect-square w-full overflow-hidden rounded-[1rem] bg-black [&_video]:!h-full [&_video]:!w-full [&_video]:object-cover"
+                  />
+                  {isScannerLoading && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center rounded-[1rem] bg-black/80">
+                      <Loader2 className="h-10 w-10 animate-spin text-[#8f63ff]" />
+                      <p className="mt-3 text-xs font-medium text-white/60">Starting camera...</p>
+                    </div>
+                  )}
                 </div>
-                {scanError && (
-                  <div className="mx-auto mt-4 max-w-[300px] rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-center text-sm text-red-300">
-                    {scanError}
+                <div className="mx-auto mt-4 w-full max-w-[300px] space-y-4">
+                  {scanError && (
+                    <div className="flex flex-col gap-3">
+                      <div className="rounded-lg bg-red-500/10 border border-red-500/30 px-4 py-3 text-center text-sm text-red-300">
+                        {scanError}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void startScan()}
+                        className="flex items-center justify-center gap-2 rounded-xl bg-white/5 py-3 text-sm font-semibold text-white hover:bg-white/10"
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                        Retry Camera
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <div className="mx-auto mt-5 w-full max-w-[min(300px,100%)] space-y-3 text-[0.82rem] font-medium text-white/82 sm:mt-8 sm:space-y-4 sm:text-[0.92rem]">
+                  <div className="flex items-center gap-3"><span className="h-2.5 w-2.5 rounded-full bg-[#8f63ff] shadow-[0_0_10px_rgba(143,99,255,0.6)]" /><span>Scan QR from vendor</span></div>
+                  <div className="flex items-center gap-3"><span className="h-2.5 w-2.5 rounded-full bg-[#8f63ff] shadow-[0_0_10px_rgba(143,99,255,0.6)]" /><span>Move closer for better reading</span></div>
+                  <div className="flex items-center gap-3"><span className="h-2.5 w-2.5 rounded-full bg-[#8f63ff] shadow-[0_0_10px_rgba(143,99,255,0.6)]" /><span>Don&apos;t go back. Amount can&apos;t be changed</span></div>
+                </div>
+              </div>
+            )}
+
+            {screen === "pending" && (
+              <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-[radial-gradient(circle_at_50%_20%,rgba(143,99,255,0.18)_0%,rgba(18,18,22,0.3)_32%,rgba(0,0,0,0)_62%)] px-4 pb-[max(5.5rem,calc(env(safe-area-inset-bottom)+4.5rem))] pt-6 sm:px-5 sm:pb-8 sm:pt-8">
+                <div className="mx-auto mt-5 w-full max-w-[320px] rounded-[1.2rem] border border-white/10 bg-[#121216]/92 p-4 text-sm text-white/72">
+                  <p className="font-semibold text-white/92">QR Pay {transactionData?.id || "..."}</p>
+                </div>
+
+                <div className="mx-auto mt-6 w-full max-w-[320px] overflow-hidden rounded-[1.5rem]  p-3 shadow-[0_20px_40px_rgba(0,0,0,0.35)]">
+                  <img
+                    src="/animation.svg"
+                    alt="Waiting animation"
+                    className="h-[min(260px,35dvh)] w-full rounded-[1rem] object-contain"
+                  />
+                </div>
+
+                {orderRefreshError && (
+                  <div className="mx-auto mt-4 w-full max-w-[320px] rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+                    {orderRefreshError}
                   </div>
                 )}
-                <div className="mx-auto mt-8 w-full max-w-[300px] space-y-4 text-[0.92rem] font-medium text-white/82">
-                  <div className="flex items-center gap-3"><span className="h-2.5 w-2.5 rounded-full bg-[#8f63ff] shadow-[0_0_10px_rgba(143,99,255,0.6)]" /><span>Scan QR from vendor</span></div>
-                  <div className="flex items-center gap-3"><span className="h-2.5 w-2.5 rounded-full bg-[#8f63ff] shadow-[0_0_10px_rgba(143,99,255,0.6)]" /><span>Don't back. Amount can't be change</span></div>
+
+                <div className="mx-auto mt-auto flex w-full max-w-[320px] flex-col gap-3 pt-6">
+                  <button
+                    type="button"
+                    onClick={() => void refreshTransactionStatus(true)}
+                    disabled={isRefreshingOrder}
+                    className="flex h-14 w-full items-center justify-center gap-3 rounded-[1.2rem] bg-[linear-gradient(90deg,#7c5bdf_0%,#5e2db3_48%,#38116e_100%)] px-5 text-[0.96rem] font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16),0_10px_24px_rgba(67,24,145,0.36)] hover:brightness-110 disabled:opacity-60"
+                  >
+                    <RefreshCw className={`h-5 w-5 ${isRefreshingOrder ? "animate-spin" : ""}`} />
+                    <span>{isRefreshingOrder ? "Refreshing..." : "Refresh status"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClose}
+                    className="h-14 w-full rounded-[1.2rem] border border-white/10 bg-[#17181d] text-[1rem] font-semibold text-white shadow-[0_10px_24px_rgba(0,0,0,0.2)] hover:bg-[#1f2026]"
+                  >
+                    Close
+                  </button>
                 </div>
               </div>
             )}
 
             {/* Success Screen */}
             {screen === "success" && (
-              <div className="flex flex-1 flex-col bg-[radial-gradient(circle_at_50%_22%,rgba(166,255,121,0.11)_0%,rgba(22,22,26,0.22)_24%,rgba(0,0,0,0)_54%)] pb-4">
+              <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-[radial-gradient(circle_at_50%_22%,rgba(166,255,121,0.11)_0%,rgba(22,22,26,0.22)_24%,rgba(0,0,0,0)_54%)] pb-[max(5.5rem,calc(env(safe-area-inset-bottom)+4.5rem))] sm:pb-4">
                 <div className="flex flex-1 flex-col">
                   <div className="flex flex-col items-center px-6 pb-6 pt-8">
                     <div className="relative flex h-[126px] w-[126px] items-center justify-center rounded-full border-[4px] border-[#b7ff8e] shadow-[0_0_24px_rgba(183,255,142,0.18)]">
                       <Check className="h-16 w-16 stroke-[4] text-[#d8ffbc]" />
                     </div>
                     <h3 className="pt-6 text-[1.2rem] font-medium tracking-[-0.03em] text-white/95">Payment Completed</h3>
-                    <p className="pt-2 text-center text-sm text-white/60">Admin will send ₹{Number.parseFloat(displayAmount || "0").toLocaleString("en-IN")}<br/>to {scannedUpiId} via UPI</p>
                   </div>
                   <div className="mx-4 rounded-[0.2rem] border-x border-t border-white/7 bg-[#121216]/90 px-4 py-3 text-center">
                     <p className="text-[1.12rem] font-medium tracking-[-0.03em] text-[#b7e88f]">₹ {Number.parseFloat(displayAmount || "0").toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-                    <p className="pt-1 text-[0.9rem] font-medium text-white/70">= {usdtAmount} USDT sent</p>
-                    <p className="pt-2 text-xs text-white/50">Merchant: {scannedUpiId}</p>
+                    <p className="pt-1 text-[0.9rem] font-medium text-white/70">
+                      = {usdtTotalAmount} USDT sent ({usdtBaseAmount} + {NETWORK_FEE_USDT.toFixed(2)} fee)
+                    </p>
+                    <p className="pt-2 text-xs text-white/50">Merchant: {transactionData?.scannedUpiId || scannedUpiId}</p>
                   </div>
                   <div className="min-h-[100px] flex-1" />
                 </div>

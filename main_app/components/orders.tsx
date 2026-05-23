@@ -33,14 +33,14 @@ export default function Orders() {
       );
     } else if (activeTab === 'sell') {
       filteredOrders = filteredOrders.filter(order => 
-        order.orderType === 'SELL'
+        order.orderType.includes('SELL')
       );
     }
 
     // Filter by status
     if (status === 'ongoing') {
       return filteredOrders.filter(order => 
-        ['PENDING', 'ADMIN_APPROVED', 'PAYMENT_SUBMITTED'].includes(order.status)
+        ['PENDING', 'PENDING_ADMIN_PAYMENT', 'ADMIN_APPROVED', 'PAYMENT_SUBMITTED'].includes(order.status)
       );
     } else {
       return filteredOrders.filter(order => 
@@ -55,6 +55,12 @@ export default function Orders() {
   const getStatusInfo = (status: string) => {
     switch (status) {
       case 'PENDING':
+        return {
+          label: 'Pending',
+          color: 'text-yellow-500',
+          dotColor: 'bg-yellow-500'
+        };
+      case 'PENDING_ADMIN_PAYMENT':
         return {
           label: 'Pending',
           color: 'text-yellow-500',
@@ -105,8 +111,10 @@ export default function Orders() {
       setShowBuyUPIModal(true);
     } else if (order.orderType === 'SELL' && order.currency === 'UPI') {
       setShowSellUPIModal(true);
-    } else if (order.orderType === 'SELL' && order.currency === 'CDM') {
+    } else if (order.orderType === 'SELL_CDM' || (order.orderType === 'SELL' && order.currency === 'CDM')) {
       setShowSellCDMModal(true);
+    } else if (order.orderType === 'SELL') {
+      setShowSellUPIModal(true);
     }
   };
 

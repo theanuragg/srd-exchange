@@ -1,5 +1,49 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { serializeOrder } from '@/lib/server/orders'
+
+// GET - Fetch order
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ orderId: string }> }
+) {
+  try {
+    const { orderId } = await params
+
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            walletAddress: true,
+            smartWalletAddress: true,
+            upiId: true,
+            bankDetails: true
+          }
+        }
+      }
+    })
+
+    if (!order) {
+      return NextResponse.json(
+        { success: false, error: 'Order not found' },
+        { status: 404 }
+      )
+    }
+
+    return NextResponse.json({
+      success: true,
+      order: serializeOrder(order as any)
+    })
+  } catch (error) {
+    console.error('Error fetching order:', error)
+    return NextResponse.json(
+      { success: false, error: 'Failed to fetch order' },
+      { status: 500 }
+    )
+  }
+}
 
 // PATCH - Update order
 export async function PATCH(
@@ -20,6 +64,7 @@ export async function PATCH(
           select: {
             id: true,
             walletAddress: true,
+            smartWalletAddress: true,
             upiId: true,
             bankDetails: true
           }
@@ -29,7 +74,7 @@ export async function PATCH(
 
     return NextResponse.json({
       success: true,
-      order
+      order: serializeOrder(order as any)
     })
   } catch (error) {
     console.error('Error updating order:', error)

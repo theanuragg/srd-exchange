@@ -1,26 +1,34 @@
 "use client";
 
 import { Copy, User, ExternalLink, RefreshCw, History } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import HistoryDrawer from "./HistoryDrawer";
 import { useWalletManager } from "@/hooks/useWalletManager";
 import { useUserOrders } from "@/hooks/useUserOrders";
 import { useRates } from "@/hooks/useRates";
 import { useModalState } from "@/hooks/useModalState";
+import {
+  BUY_CDM_MAX_USDT,
+  BUY_CDM_MIN_USDT,
+  SELL_CDM_MAX_USDT,
+  SELL_CDM_MIN_INR,
+  getSellCdmMinUsdt,
+} from "@/lib/order-limits";
 import BuyCDMModal from "./modal/buy-cdm";
 import BuyUPIModal from "./modal/buy-upi";
 import SellUPIModal from "./modal/sell-upi";
 import SellCDMModal from "./modal/sell-cdm";
 import BankDetailsModal, { BankDetailsData } from "./modal/bank-details-modal";
 import { useBankDetails } from "@/hooks/useBankDetails";
-import { parseUnits, formatUnits } from "viem";
+import { parseAbi, parseUnits, formatUnits, type Address } from "viem";
 import { bsc } from "@particle-network/connectkit/chains";
+import { sendSponsoredContractWriteDetailed } from "@/lib/sponsoredTransactions";
+import { retryWithRPCFailover } from "@/lib/rpcManager";
 
 import {
   ConnectButton,
-  usePublicClient,
-  useWallets,
+  useSmartAccount,
 } from "@particle-network/connectkit";
 
 const CONTRACTS = {
@@ -54,13 +62,8 @@ export default function BuySellSection() {
 
   // Buy Limits
   const BUY_UPI_MAX_USDT = 1;
-  const BUY_CDM_MIN_USDT = 1;
-  const BUY_CDM_MAX_USDT = 150;
-
   // Sell Limits
   const SELL_UPI_MAX_USDT = 100;
-  const SELL_CDM_MIN_USDT = 58.4112; // Approx ₹5,000 at 85.6 rate
-  const SELL_CDM_MAX_USDT = 250;
 
   const [activeTab, setActiveTab] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("");
@@ -75,189 +78,107 @@ export default function BuySellSection() {
   const [currentOrder, setCurrentOrder] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const publicClient = usePublicClient();
-  const [primaryWallet] = useWallets();
+  const smartAccount = useSmartAccount();
 
   const { saveModalState } = useModalState();
 
-  const [recipientAddress, setRecipientAddress] = useState<string>("0x16071780eaaa5e5ac7a31ca2485026eb24071662");
-  const [isSending, setIsSending] = useState<boolean>(false);
-  const [transactionHash, setTransactionHash] = useState<string | null>(null);
-  const [needsGasStationApproval, setNeedsGasStationApproval] = useState<boolean>(false);
-
-  const USDT_TRANSFER_ABI = [
+  const USDT_TRANSFER_ABI = parseAbi([
     "function transfer(address to, uint256 amount) returns (bool)",
-  ] as const;
+  ]);
 
-  const sendUserPaidUSDT = async (
+  const sendSponsoredSellTransfer = async (
     recipientAddress: string,
     usdtAmount: string,
     usdtDecimals: number
-  ): Promise<string> => {
-    if (!address || !primaryWallet) throw new Error("Wallet not connected");
+  ) => {
+    if (!address || !smartAccount) throw new Error("Smart account not connected");
 
     try {
-      const walletClient = primaryWallet.getWalletClient();
       const parsedAmount = parseUnits(usdtAmount, usdtDecimals);
 
-      console.log("💰 Sending USDT from EOA wallet:", {
-        from: address,
-        to: recipientAddress,
-        amount: usdtAmount,
-        parsedAmount: parsedAmount.toString(),
-      });
+        console.log("💰 Sending sponsored USDT from smart account:", {
+            from: address,
+            to: recipientAddress,
+            amount: usdtAmount,
+            parsedAmount: parsedAmount.toString(),
+        });
 
-      const hash = await walletClient.writeContract({
-        address: CONTRACTS.USDT[56],
-        abi: USDT_TRANSFER_ABI,
-        functionName: "transfer",
-        args: [recipientAddress as `0x${string}`, parsedAmount],
-        account: address as `0x${string}`,
-        chain: bsc,
-      });
+        // Pre-flight: check smart account's actual USDT balance
+        try {
+            const accountInfo = await smartAccount.getAccount();
+            const smartAccountAddr = accountInfo.smartAccountAddress;
+            if (smartAccountAddr) {
+                const balance = await retryWithRPCFailover(async (client) => {
+                    return await client.readContract({
+                        address: CONTRACTS.USDT[56],
+                        abi: parseAbi(["function balanceOf(address owner) view returns (uint256)"]),
+                        functionName: "balanceOf",
+                        args: [smartAccountAddr as Address],
+                    });
+                }) as bigint;
 
-      console.log('✅ Transaction hash:', hash);
+                if (balance < parsedAmount) {
+                    throw new Error(
+                        `Insufficient USDT balance in smart account. Required: ${usdtAmount} USDT, Available: ${formatUnits(balance, usdtDecimals)} USDT. The portfolio shows your EOA balance, but sponsored transactions use a separate smart account wallet. Use the "Send" feature to deposit USDT to your smart account (${smartAccountAddr.slice(0, 10)}...).`
+                    );
+                }
+                console.log("✅ Smart account USDT balance sufficient:", {
+                    balance: formatUnits(balance, usdtDecimals),
+                    required: usdtAmount,
+                });
+            }
+        } catch (checkError: any) {
+            if (checkError.message?.includes("Insufficient USDT balance in smart account")) {
+                throw checkError;
+            }
+            console.warn("⚠️ Could not verify smart account balance, proceeding:", checkError);
+        }
 
-      if (publicClient && 'waitForTransactionReceipt' in publicClient) {
-        await (publicClient as any).waitForTransactionReceipt({ hash });
-      }
+        const result = await sendSponsoredContractWriteDetailed({
+          smartAccount,
+          chainId: bsc.id,
+          address: CONTRACTS.USDT[56],
+          abi: USDT_TRANSFER_ABI,
+          functionName: "transfer",
+          args: [recipientAddress as `0x${string}`, parsedAmount],
+        });
 
-      return hash;
+      console.log("✅ Sponsored sell transfer submitted", result);
+
+      return result;
 
     } catch (error: any) {
-      console.error("❌ USDT transfer error:", error);
+        console.error("❌ Sponsored USDT transfer error:", error);
 
-      let userMessage = "Transaction failed: ";
+        // Pass through detailed pre-flight errors directly
+        if (error.message?.includes("smart account")) {
+            throw error;
+        }
 
-      if (error.message.includes("insufficient") || error.message.includes("exceed")) {
-        userMessage += "Insufficient BNB for gas or USDT balance.";
-      } else if (error.message.includes("rejected")) {
-        userMessage += "Transaction was rejected or canceled.";
-      } else {
-        userMessage += error.message || "Unknown error occurred.";
-      }
+        let userMessage = "Transaction failed: ";
 
-      throw new Error(userMessage);
-    }
-  };
-
-  /**
-   * Wait for transaction confirmation with retry logic
-   * @param txHash - Transaction hash to wait for
-   * @param maxRetries - Maximum number of retries (default: 3)
-   * @param retryDelay - Delay between retries in ms (default: 5000)
-   * @returns true if confirmed, false if failed
-   */
-  const waitForTransactionConfirmation = async (
-    txHash: string,
-    maxRetries: number = 3,
-    retryDelay: number = 5000
-  ): Promise<boolean> => {
-    if (!publicClient) {
-      console.error('❌ Public client not available');
-      return false;
-    }
-
-    console.log(`⏳ Waiting for transaction confirmation: ${txHash}`);
-
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        console.log(`🔄 Confirmation attempt ${attempt}/${maxRetries}...`);
-
-        const receipt = await publicClient.waitForTransactionReceipt({
-          hash: txHash as `0x${string}`,
-          timeout: 30000, // 30 second timeout per attempt
-        });
-
-        if (receipt.status === 'success') {
-          console.log(`✅ Transaction confirmed in block ${receipt.blockNumber}`);
-          return true;
+        if (error.message.includes("insufficient") || error.message.includes("exceed")) {
+            userMessage += "Insufficient USDT balance.";
+        } else if (error.message.includes("rejected")) {
+            userMessage += "Transaction was rejected or canceled.";
         } else {
-          console.error(`❌ Transaction failed with status: ${receipt.status}`);
-          return false;
+            userMessage += error.message || "Unknown error occurred.";
         }
-      } catch (error) {
-        console.error(`⚠️ Confirmation attempt ${attempt} failed:`, error);
 
-        if (attempt < maxRetries) {
-          console.log(`⏳ Retrying in ${retryDelay / 1000} seconds...`);
-          await new Promise(resolve => setTimeout(resolve, retryDelay));
-        } else {
-          console.error(`❌ Transaction confirmation failed after ${maxRetries} attempts`);
-          return false;
-        }
-      }
+        throw new Error(userMessage);
     }
-
-    return false;
-  };
-
-  /**
-   * Create database order with retry logic
-   * @param orderPayload - Order data to send to API
-   * @param maxRetries - Maximum number of retries (default: 3)
-   * @returns Order data if successful, throws error if failed
-   */
-  const createDatabaseOrderWithRetry = async (
-    orderPayload: any,
-    maxRetries: number = 3
-  ): Promise<any> => {
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        console.log(`📝 Database order creation attempt ${attempt}/${maxRetries}...`);
-
-        const dbResponse = await fetch('/api/orders', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(orderPayload),
-        });
-
-        if (!dbResponse.ok) {
-          const errorText = await dbResponse.text();
-          throw new Error(
-            `Database API error: ${dbResponse.status} - ${errorText}`
-          );
-        }
-
-        const data = await dbResponse.json();
-
-        if (!data.success) {
-          throw new Error(data.error || 'Failed to create database order');
-        }
-
-        console.log(`✅ Database order created successfully on attempt ${attempt}`);
-        return data.order;
-      } catch (error) {
-        console.error(`❌ Database order creation attempt ${attempt} failed:`, error);
-
-        if (attempt < maxRetries) {
-          const retryDelay = 2000 * attempt; // Exponential backoff: 2s, 4s, 6s
-          console.log(`⏳ Retrying in ${retryDelay / 1000} seconds...`);
-          await new Promise(resolve => setTimeout(resolve, retryDelay));
-        } else {
-          console.error(`❌ Database order creation failed after ${maxRetries} attempts`);
-          throw error;
-        }
-      }
-    }
-
-    throw new Error('Database order creation failed after all retries');
   };
 
   // Wallet and orders data
   const {
-    address: eoaAddress,
+    address,
+    eoaAddress,
+    smartWalletAddress,
     isConnected,
     walletData,
     isLoading: walletLoading,
     refetchBalances,
-    createSellOrderOnChain,
-    approveUSDT,
   } = useWalletManager();
-
-  const address = eoaAddress;
 
   const {
     orders,
@@ -279,6 +200,7 @@ export default function BuySellSection() {
   const currentPaymentMethod = paymentMethod === "cdm" ? "CDM" : "UPI";
   const buyPrice = getBuyRate(currentPaymentMethod);
   const sellPrice = getSellRate(currentPaymentMethod);
+  const sellCdmMinUsdt = getSellCdmMinUsdt(sellPrice);
 
   // Helper functions
   const calculateUSDT = (rupeeAmount: string) => {
@@ -315,6 +237,16 @@ export default function BuySellSection() {
 
   const usdtAmount = calculateUSDT(amount);
   const rupeeAmount = calculateRupee(amount);
+
+  const displayUsdtBalance = useMemo(() => {
+    if (!isConnected || !walletData?.balances?.usdt?.formatted) return null;
+    const n = Number.parseFloat(walletData.balances.usdt.formatted);
+    if (!Number.isFinite(n)) return walletData.balances.usdt.formatted;
+    return n.toLocaleString("en-IN", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  }, [isConnected, walletData?.balances?.usdt?.formatted]);
 
   const getPaymentMethodName = () => {
     switch (paymentMethod) {
@@ -366,7 +298,7 @@ export default function BuySellSection() {
       });
 
       if (orderType.includes("SELL")) {
-        console.log("💰 SELL ORDER: Particle smart account, user pays native gas");
+        console.log("💰 SELL ORDER: Particle smart account with Alchemy-sponsored gas");
 
         const sellResult = await handleSellOrder(
           orderType,
@@ -454,7 +386,7 @@ export default function BuySellSection() {
           "Insufficient USDT balance. Please check your wallet balance and ensure you have enough USDT for this order.";
       } else if (errorMessage.includes("transfer failed")) {
         displayMessage =
-          "USDT transfer failed. Please ensure you have enough USDT and BNB for gas fees.";
+          "USDT transfer failed. Please ensure you have enough USDT and try again.";
       } else if (errorMessage.includes("Database error")) {
         displayMessage = `Database error: ${errorMessage}. Please try again or contact support if the issue persists.`;
       } else if (errorMessage.includes("Blockchain transaction failed")) {
@@ -480,106 +412,122 @@ export default function BuySellSection() {
     finalUsdtAmount: string,
     rate: number
   ) => {
-    let txHash: string | null = null;
+    let submission: { userOpHash: `0x${string}`; transactionHash: `0x${string}` } | null = null;
 
     try {
-      console.log("🚀 Starting user-paid sell order creation:", {
+      console.log("🚀 Starting sponsored sell order creation:", {
         orderType,
         finalOrderAmount,
         finalUsdtAmount,
         rate,
         userAddress: address,
-        adminWallet: ADMIN_WALLET_ADDRESS
+        smartWalletAddress,
+        eoaAddress,
+        adminWallet: ADMIN_WALLET_ADDRESS,
       });
 
-      // Get USDT decimals (BSC USDT uses 18 decimals)
       const usdtDecimals = 18;
 
-      // Send USDT directly to admin through Particle AA while the user pays native gas
-      console.log("💸 Initiating user-paid Particle USDT transfer to admin wallet...");
-      txHash = await sendUserPaidUSDT(
+      console.log("💸 Sending sponsored smart-account USDT transfer...");
+      submission = await sendSponsoredSellTransfer(
         ADMIN_WALLET_ADDRESS,
         finalUsdtAmount,
         usdtDecimals
       );
 
-      console.log("✅ User-paid Particle USDT transfer successful:", txHash);
+      console.log("✅ USDT transfer succeeded, creating order record", {
+        userOpHash: submission.userOpHash,
+        transactionHash: submission.transactionHash,
+      });
 
-      // CRITICAL: Create database order IMMEDIATELY after getting hash
-      // This ensures we capture the order even if confirmation times out
-      console.log('📝 Creating database order immediately with transaction hash...');
+      const response = await fetch("/api/orders/sell-sponsored", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          chainId: bsc.id,
+          walletAddress: smartWalletAddress ?? address,
+          linkedEoaAddress: eoaAddress ?? address,
+          orderType,
+          paymentMethod: paymentMethod.toUpperCase(),
+          amount: finalOrderAmount,
+          usdtAmount: finalUsdtAmount,
+          sellRate: rate,
+          userOpHash: submission.userOpHash,
+          transactionHash: submission.transactionHash,
+        }),
+      });
 
-      const orderPayload = {
-        walletAddress: address,
-        orderType: orderType,
-        amount: finalOrderAmount,
-        usdtAmount: finalUsdtAmount,
-        buyRate: null,
-        sellRate: rate,
-        paymentMethod: paymentMethod.toUpperCase(),
-        blockchainOrderId: null,
-        status: 'PENDING_ADMIN_PAYMENT',
-        gasStationTxHash: txHash, // Preserve existing DB field name for compatibility
-        linkedEoaAddress: eoaAddress, // Link Smart Wallet to EOA user
-      };
+      const data = await response.json();
 
-      // Create database order with retry logic
-      // We explicitly catch errors here to ensure we don't lose the txHash context
-      let databaseOrder;
-      try {
-        databaseOrder = await createDatabaseOrderWithRetry(orderPayload);
-        console.log("✅ Sell order created - USDT transferred to admin via user-paid Particle transaction");
-      } catch (dbError) {
-        console.error('❌ Database creation failed but Transaction Sent:', txHash, dbError);
-        const errMessage = dbError instanceof Error ? dbError.message : String(dbError);
-        // Throw a specific error that includes the hash so the user can save it
-        throw new Error(`CRITICAL: Transaction sent (Hash: ${txHash}) but Order creation failed. Please contact support with this hash. Error: ${errMessage}`);
+      if (!response.ok || !data.success || !data.order) {
+        throw new Error(data.error || "Failed to create sponsored sell order");
       }
 
-      // Wait for transaction confirmation (Background process to not block UI)
-      // The order is already safe in DB, so we return immediately to update UI
-      console.log('⏳ Transaction sent. Waiting for confirmation in background...');
+      console.log("✅ Sponsored sell order created", {
+        userOpHash: submission.userOpHash,
+        transactionHash: submission.transactionHash,
+        orderId: data.order.fullId,
+      });
 
-      // Start confirmation check in background without awaiting
-      waitForTransactionConfirmation(txHash!)
-        .then(isConfirmed => {
-          if (isConfirmed) {
-            console.log('✅ Background: Transaction confirmed on chain');
-            // Refresh balances again after confirmation to ensure accurate wallet state
-            refetchBalances();
-          } else {
-            console.warn('⚠️ Background: Transaction confirmation timed out or check failed');
-          }
-        })
-        .catch(confirmError => {
-          console.warn('⚠️ Background: Confirmation check error:', confirmError);
-        });
+      await Promise.all([refetchOrders(), refetchBalances()]);
 
-      // Immediately refresh orders since DB entry is created
-      await refetchOrders();
-      // Trigger balance refresh (might be stale until block confirms, but good to trigger)
-      refetchBalances();
-
-      return databaseOrder;
-
+      return data.order;
     } catch (sellError) {
-      console.error("❌ User-paid sell order creation failed:", sellError);
+      console.error("❌ Sponsored sell order creation failed:", sellError);
 
       const errorMessage =
         sellError instanceof Error ? sellError.message : String(sellError);
 
-      if (errorMessage.includes('CRITICAL')) {
-        // Pass through our critical error as-is
-        throw sellError;
-      } else if (errorMessage.includes('Insufficient USDT balance')) {
+      if (errorMessage.includes("Insufficient USDT balance") && !errorMessage.includes("smart account")) {
         throw new Error(
-          'Insufficient USDT balance. Please ensure you have enough USDT for this order.'
+          "Insufficient USDT balance. Please ensure you have enough USDT for this order."
         );
-      } else if (errorMessage.includes('timeout')) {
-        throw new Error('Request timed out. Please try again.');
-      } else {
-        throw new Error(`Sell order failed: ${errorMessage}`);
       }
+
+      if (errorMessage.includes("timeout")) {
+        throw new Error("Request timed out. Please try again.");
+      }
+
+      // If the USDT transfer succeeded but order creation failed, we still need to create the order.
+      // Try one more time directly with the server.
+      if (submission?.userOpHash) {
+        console.warn("⚠️ Transfer succeeded but order API failed. Retrying order creation...");
+        try {
+          const retryResponse = await fetch("/api/orders/sell-sponsored", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chainId: bsc.id,
+              walletAddress: smartWalletAddress ?? address,
+              linkedEoaAddress: eoaAddress ?? address,
+              orderType,
+              paymentMethod: paymentMethod.toUpperCase(),
+              amount: finalOrderAmount,
+              usdtAmount: finalUsdtAmount,
+              sellRate: rate,
+              userOpHash: submission.userOpHash,
+              transactionHash: submission.transactionHash,
+            }),
+          });
+          const retryData = await retryResponse.json();
+          if (retryResponse.ok && retryData.success && retryData.order) {
+            console.log("✅ Order created on retry", retryData.order.fullId);
+            await Promise.all([refetchOrders(), refetchBalances()]);
+            return retryData.order;
+          }
+        } catch (retryError) {
+          console.error("❌ Order creation retry also failed:", retryError);
+        }
+
+        // If still failing, throw a clear error about the state
+        throw new Error(
+          `USDT transferred to admin (tx: ${submission.userOpHash.slice(0, 16)}...) but order creation failed. Please contact support with this transaction hash for manual reconciliation.`
+        );
+      }
+
+      throw new Error(`Sell order failed: ${errorMessage}`);
     }
   };
 
@@ -645,12 +593,12 @@ export default function BuySellSection() {
           };
         }
       } else if (paymentMethod === "cdm") {
-        if (usdtAmount < SELL_CDM_MIN_USDT) {
+        if (usdtAmount < sellCdmMinUsdt) {
           return {
             isValid: false,
-            error: `Sell CDM orders require minimum ${SELL_CDM_MIN_USDT} USDT. Current: ${usdtAmount.toFixed(
+            error: `Sell CDM orders require minimum ₹${SELL_CDM_MIN_INR.toLocaleString("en-IN")} (≈ ${sellCdmMinUsdt.toFixed(
               4
-            )} USDT`,
+            )} USDT at current rate). Current: ${usdtAmount.toFixed(4)} USDT`,
           };
         }
         if (usdtAmount > SELL_CDM_MAX_USDT) {
@@ -680,13 +628,15 @@ export default function BuySellSection() {
         max: maxLimit * currentRate,
       };
     } else if (paymentMethod === "cdm") {
-      const minLimit =
-        activeTab === "buy" ? BUY_CDM_MIN_USDT : SELL_CDM_MIN_USDT;
-      const maxLimit =
-        activeTab === "buy" ? BUY_CDM_MAX_USDT : SELL_CDM_MAX_USDT;
+      if (activeTab === "buy") {
+        return {
+          min: BUY_CDM_MIN_USDT * currentRate,
+          max: BUY_CDM_MAX_USDT * currentRate,
+        };
+      }
       return {
-        min: minLimit * currentRate,
-        max: maxLimit * currentRate,
+        min: SELL_CDM_MIN_INR,
+        max: SELL_CDM_MAX_USDT * currentRate,
       };
     }
     return { min: 0, max: Infinity };
@@ -962,15 +912,6 @@ export default function BuySellSection() {
     };
   }, []);
 
-  function executeTxEthers(event: React.MouseEvent<HTMLButtonElement>): void {
-    throw new Error("Function not implemented.");
-  }
-
-  async function approveGasStationAfterFunding(storedUsdtAmount: string, arg1: string, storedOrderType: string): Promise<boolean> {
-    throw new Error("Function not implemented.");
-    return false; // This line won't be reached, but satisfies TypeScript
-  }
-
   return (
     <>
       <div className="bg-black text-white h-full flex items-center justify-center p-4 sm:p-8 max-w-4xl mx-auto">
@@ -1184,21 +1125,38 @@ export default function BuySellSection() {
                   </span>
                 </div>
 
-                <div className="relative mb-4 sm:mb-6 flex justify-center">
-                  <span className="absolute left-3 sm:left-65 top-1/2 transform -translate-y-1/2 text-gray-400 text-2xl sm:text-3xl">
+                <div className="relative mx-auto mb-4 w-full max-w-xs sm:mb-6">
+                  <span className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 text-2xl text-gray-400 sm:left-4 sm:text-3xl">
                     {activeTab === "buy" ? "₹" : "$"}
                   </span>
                   <motion.input
                     type="text"
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
-                    className="bg-[#1E1C1C] border border-gray-600/50 rounded-xl py-4 sm:py-5 pl-10 sm:pl-12 pr-4 text-xl sm:text-2xl font-medium focus:outline-none focus:border-[#622DBF] focus:ring-2 focus:ring-purple-500/20 text-white placeholder-gray-500 w-full max-w-xs"
+                    className="w-full rounded-xl border border-gray-600/50 bg-[#1E1C1C] py-4 pl-10 pr-[6.5rem] text-xl font-medium text-white placeholder-gray-500 focus:border-[#622DBF] focus:outline-none focus:ring-2 focus:ring-purple-500/20 sm:py-5 sm:pl-12 sm:pr-36 sm:text-2xl"
                     placeholder={
                       activeTab === "buy" ? "Enter rupees" : "Enter USDT"
                     }
                     whileFocus={{ scale: 1.02 }}
                     transition={{ duration: 0.2 }}
                   />
+                  <span
+                    className="pointer-events-none absolute right-3 top-1/2 max-w-[6rem] -translate-y-1/2 truncate text-right text-[0.65rem] font-medium leading-tight text-gray-400 sm:right-4 sm:max-w-none sm:text-xs"
+                    title="Wallet USDT balance"
+                  >
+                    {walletLoading ? (
+                      <span className="text-gray-500">…</span>
+                    ) : displayUsdtBalance !== null ? (
+                      <>
+                        
+                        <span className="block tabular-nums text-white/75">
+                          {displayUsdtBalance} USDT
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-gray-500">—</span>
+                    )}
+                  </span>
                 </div>
 
                 <div className="flex items-center justify-center mb-3 sm:mb-4">
@@ -1256,17 +1214,19 @@ export default function BuySellSection() {
                     )}
                     {paymentMethod === "cdm" && (
                       <>
-                        Limits: {activeTab === "buy" ? BUY_CDM_MIN_USDT : SELL_CDM_MIN_USDT}-{activeTab === "buy" ? BUY_CDM_MAX_USDT : SELL_CDM_MAX_USDT} USDT (₹
-                        {(
-                          (activeTab === "buy" ? BUY_CDM_MIN_USDT : SELL_CDM_MIN_USDT) *
-                          (activeTab === "buy" ? buyPrice : sellPrice)
-                        ).toFixed(0)}{" "}
-                        - ₹
-                        {(
-                          (activeTab === "buy" ? BUY_CDM_MAX_USDT : SELL_CDM_MAX_USDT) *
-                          (activeTab === "buy" ? buyPrice : sellPrice)
-                        ).toFixed(0)}
-                        )
+                        {activeTab === "buy" ? (
+                          <>
+                            Limits: {BUY_CDM_MIN_USDT}-{BUY_CDM_MAX_USDT} USDT (₹
+                            {(BUY_CDM_MIN_USDT * buyPrice).toFixed(0)} - ₹
+                            {(BUY_CDM_MAX_USDT * buyPrice).toFixed(0)})
+                          </>
+                        ) : (
+                          <>
+                            Limits: {sellCdmMinUsdt.toFixed(2)}-{SELL_CDM_MAX_USDT} USDT (₹
+                            {SELL_CDM_MIN_INR.toLocaleString("en-IN")} - ₹
+                            {(SELL_CDM_MAX_USDT * sellPrice).toFixed(0)})
+                          </>
+                        )}
                       </>
                     )}
                   </div>
@@ -1367,307 +1327,7 @@ export default function BuySellSection() {
             )}
           </AnimatePresence>
 
-          {needsGasStationApproval && (
-            <motion.div
-              className="mt-4 bg-[#101010] border border-[#3E3E3E] rounded-md p-4 sm:p-5"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3 }}
-            >
-              <div className="space-y-4">
-                {/* Header */}
-                <div className="flex items-center space-x-3 mb-3">
-                  <div className="w-8 h-8 rounded-full bg-green-600/20 flex items-center justify-center">
-                    <svg
-                      className="w-5 h-5 text-green-400"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                  </div>
-                  <h3 className="text-lg font-semibold text-white">
-                    Approve Gas Station for USDT Transfer
-                  </h3>
-                </div>
 
-                {/* Description */}
-                <p className="text-gray-300 text-sm leading-relaxed">
-                  Please approve Gas Station to spend your USDT. After approval,
-                  your USDT will be automatically transferred to the admin
-                  account and your sell order will be created.
-                </p>
-
-                {/* Action Button */}
-                <motion.button
-                  onClick={async () => {
-                    try {
-                      setIsLoading(true);
-
-                      const storedUsdtAmount = amount;
-                      const storedInrAmount = calculateRupee(amount);
-                      const storedOrderType =
-                        paymentMethod === "cdm" ? "SELL_CDM" : "SELL";
-
-                      console.log(
-                        "🚀 Starting complete gasless sell order flow..."
-                      );
-                      console.log("📋 Order details:", {
-                        usdtAmount: storedUsdtAmount,
-                        inrAmount: storedInrAmount,
-                        orderType: storedOrderType,
-                        paymentMethod: paymentMethod.toUpperCase(),
-                      });
-
-                      // Execute approval and transfer
-                      const transferSuccessful =
-                        await approveGasStationAfterFunding(
-                          storedUsdtAmount,
-                          storedInrAmount.toString(),
-                          storedOrderType
-                        );
-
-                      if (transferSuccessful) {
-                        console.log(
-                          "✅ Transfer completed successfully, creating database order..."
-                        );
-
-                        // Clear the approval UI
-                        setNeedsGasStationApproval(false);
-
-                        // Create database order after successful USDT transfer
-                        const finalOrderAmount = parseFloat(storedInrAmount);
-                        const rate = getSellRate(
-                          paymentMethod === "cdm" ? "CDM" : "UPI"
-                        );
-
-                        const orderPayload = {
-                          walletAddress: address,
-                          orderType: storedOrderType,
-                          amount: finalOrderAmount,
-                          usdtAmount: storedUsdtAmount,
-                          buyRate: null,
-                          sellRate: rate,
-                          paymentMethod: paymentMethod.toUpperCase(),
-                          blockchainOrderId: null,
-                          status: "PENDING_ADMIN_PAYMENT",
-                          gasStationTxHash: "completed_via_approval_flow",
-                        };
-
-                        console.log(
-                          "📝 Creating database order:",
-                          orderPayload
-                        );
-
-                        const dbResponse = await fetch("/api/orders", {
-                          method: "POST",
-                          headers: {
-                            "Content-Type": "application/json",
-                          },
-                          body: JSON.stringify(orderPayload),
-                        });
-
-                        if (dbResponse.ok) {
-                          const data = await dbResponse.json();
-                          if (data.success) {
-                            console.log(
-                              "✅ Database order created successfully:",
-                              data.order
-                            );
-
-                            // Show success message
-                            alert(
-                              "✅ Sell order completed!\n\n" +
-                              `• ${storedUsdtAmount} USDT transferred to admin\n` +
-                              `• You will receive ₹${finalOrderAmount.toFixed(
-                                2
-                              )}\n` +
-                              `• Order created: ${data.order.fullId || data.order.id
-                              }\n\n` +
-                              "Admin will process your payment shortly."
-                            );
-
-                            // Refresh data and reset form
-                            setTimeout(async () => {
-                              await refetchBalances();
-                              await refetchOrders();
-                              setAmount("");
-                              console.log("🔄 Balances and orders refreshed");
-                            }, 2000);
-                          } else {
-                            console.error(
-                              "❌ Database order creation failed:",
-                              data.error
-                            );
-                            alert(
-                              "⚠️ USDT transfer was successful, but there was an issue creating the order record. Please contact support with your transaction details."
-                            );
-                          }
-                        } else {
-                          console.error(
-                            "❌ Database API error:",
-                            dbResponse.status
-                          );
-                          alert(
-                            "⚠️ USDT transfer was successful, but there was an issue saving the order. Please contact support."
-                          );
-                        }
-                      }
-                    } catch (error) {
-                      console.error(
-                        "❌ Complete gasless sell order failed:",
-                        error
-                      );
-
-                      const errorMessage =
-                        error instanceof Error ? error.message : String(error);
-
-                      if (
-                        errorMessage.includes("approval transaction") ||
-                        errorMessage.includes("not yet confirmed")
-                      ) {
-                        alert(
-                          "⏳ Approval Transaction Pending\n\n" +
-                          "Please wait for your approval transaction to be confirmed on the blockchain, then try again.\n\n" +
-                          "This usually takes 1-2 minutes."
-                        );
-                      } else if (
-                        errorMessage.includes("Insufficient allowance")
-                      ) {
-                        alert(
-                          "⚠️ Approval Issue\n\n" +
-                          "There seems to be an issue with the USDT approval. Please try the approval process again."
-                        );
-                      } else {
-                        alert(`❌ Transaction failed: ${errorMessage}`);
-                      }
-                    } finally {
-                      setIsLoading(false);
-                    }
-                  }}
-                  disabled={isLoading}
-                  className="w-full bg-[#622DBF] hover:bg-purple-700 disabled:bg-gray-600 disabled:opacity-50 text-white py-4 px-6 rounded-xl font-bold text-lg transition-all shadow-lg shadow-purple-600/25 hover:shadow-purple-600/40 disabled:cursor-not-allowed"
-                  whileHover={{ scale: isLoading ? 1 : 1.02 }}
-                  whileTap={{ scale: isLoading ? 1 : 0.98 }}
-                  transition={{ duration: 0.2 }}
-                >
-                  {isLoading ? (
-                    <div className="flex items-center justify-center space-x-2">
-                      <motion.div
-                        className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full"
-                        animate={{ rotate: 360 }}
-                        transition={{
-                          duration: 1,
-                          repeat: Infinity,
-                          ease: "linear",
-                        }}
-                      />
-                      <span>Processing Transfer...</span>
-                    </div>
-                  ) : (
-                    "Approve & Transfer USDT"
-                  )}
-                </motion.button>
-
-
-                {/* Process Information */}
-                <div className="bg-gray-900/30 border border-gray-700/50 rounded-lg p-4 mt-4">
-                  <div className="flex items-center space-x-2 mb-3">
-                    <svg
-                      className="w-5 h-5 text-blue-400"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                    <span className="text-sm font-medium text-white">
-                      Process Overview
-                    </span>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex items-start space-x-3">
-                      <div className="w-6 h-6 rounded-full bg-[#622DBF]/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-                        <span className="text-xs font-bold text-[#622DBF]">
-                          1
-                        </span>
-                      </div>
-                      <span className="text-sm text-gray-300">
-                        You approve Gas Station for USDT spending
-                      </span>
-                    </div>
-                    <div className="flex items-start space-x-3">
-                      <div className="w-6 h-6 rounded-full bg-[#622DBF]/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-                        <span className="text-xs font-bold text-[#622DBF]">
-                          2
-                        </span>
-                      </div>
-                      <span className="text-sm text-gray-300">
-                        Gas Station automatically transfers your USDT to admin
-                      </span>
-                    </div>
-                    <div className="flex items-start space-x-3">
-                      <div className="w-6 h-6 rounded-full bg-[#622DBF]/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-                        <span className="text-xs font-bold text-[#622DBF]">
-                          3
-                        </span>
-                      </div>
-                      <span className="text-sm text-gray-300">
-                        Your sell order is created
-                      </span>
-                    </div>
-                    <div className="flex items-start space-x-3">
-                      <div className="w-6 h-6 rounded-full bg-green-600/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-                        <span className="text-xs font-bold text-green-400">
-                          4
-                        </span>
-                      </div>
-                      <span className="text-sm text-gray-300">
-                        Admin processes your payment
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Security Notice */}
-                <div className="flex items-start space-x-3 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
-                  <svg
-                    className="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-                    />
-                  </svg>
-                  <div>
-                    <h4 className="text-sm font-medium text-blue-400 mb-1">
-                      100% Safe Transaction
-                    </h4>
-                    <p className="text-xs text-gray-300">
-                      Gas Station is our verified smart contract. Your approval
-                      only allows spending the exact USDT amount for this trade.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          )}
 
         </div>
       </div>
@@ -1718,39 +1378,4 @@ export default function BuySellSection() {
       />
     </>
   );
-}
-async function verifyGasStationApproval(
-  address: string,
-  gasStationAddress: string,
-  finalUsdtAmount: string
-): Promise<boolean> {
-  try {
-    console.log("🔍 Verifying Gas Station approval...", {
-      userAddress: address,
-      gasStationAddress,
-      requiredAmount: finalUsdtAmount,
-    });
-
-    // Check current allowance
-    if (!usePublicClient || !('readContract' in usePublicClient)) throw new Error("Public client not available");
-    const currentAllowance = await (usePublicClient as any).readContract({
-      address: CONTRACTS.USDT[56],
-      abi: USDT_ABI,
-      functionName: "allowance",
-      args: [address as `0x${string}`, gasStationAddress as `0x${string}`],
-    });
-
-    const requiredAmount = parseUnits(finalUsdtAmount, 18); // BSC USDT uses 18 decimals
-
-    console.log("🔍 Approval verification:", {
-      currentAllowance: currentAllowance.toString(),
-      requiredAmount: requiredAmount.toString(),
-      sufficient: currentAllowance >= requiredAmount,
-    });
-
-    return currentAllowance >= requiredAmount;
-  } catch (error) {
-    console.error("❌ Failed to verify Gas Station approval:", error);
-    return false;
-  }
 }

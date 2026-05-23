@@ -1,6 +1,6 @@
 import { prisma } from '../lib/prisma';
 
-const ADMIN_WALLET = '0xa78f80ac6b2dbe44a098557824ffae8b961148ca';
+const ADMIN_WALLET = '0xA4c9991e1bA3F4aeB0D360186Ba6f8f7c66cC2BF';
 
 async function main() {
   try {

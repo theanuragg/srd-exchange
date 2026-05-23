@@ -45,6 +45,10 @@ export async function GET(request: NextRequest) {
       }
     })
 
+    // DEBUG: Log raw order statuses fetched for this user to help trace status issues
+    console.log('[user/orders] Fetched orders for wallet:', walletAddress, 'userId:', user.id);
+    console.log('[user/orders] Raw statuses:', orders.map(o => ({ id: o.id, status: o.status, blockchainOrderId: o.blockchainOrderId })));
+
     const transformedOrders = orders.map(order => ({
       id: `#${order.id.slice(-6)}`,
       fullId: order.id,
@@ -53,7 +57,7 @@ export async function GET(request: NextRequest) {
       type: getOrderTypeLabel(order.orderType),
       orderType: order.orderType,
       price: Number(order.buyRate || order.sellRate || 0),
-      currency: order.orderType === 'BUY_CDM' ? 'CDM' : 'UPI',
+      currency: order.orderType.includes('CDM') ? 'CDM' : 'UPI',
       status: order.status,
       user: order.user,
       createdAt: order.createdAt.toISOString()
@@ -105,6 +109,7 @@ function getOrderTypeLabel(orderType: string): string {
     case 'BUY_CDM':
       return 'Buy Order'
     case 'SELL':
+    case 'SELL_CDM':
       return 'Sell Order'
     default:
       return orderType

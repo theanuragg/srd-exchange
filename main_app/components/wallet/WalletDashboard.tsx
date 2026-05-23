@@ -522,8 +522,8 @@ export function WalletDashboard() {
             </p>
             <p className="text-gray-400 text-sm font-montserrat">
               {canTrade
-                ? 'Your wallet has sufficient BNB for gas fees'
-                : 'Add BNB to your wallet for transaction fees'
+                ? 'BNB transactions are gas-sponsored on BNB Chain'
+                : 'Switch to BNB Chain to use sponsored transactions'
               }
             </p>
           </div>

@@ -24,10 +24,7 @@ export async function GET(request: NextRequest) {
             // Map status strings to valid OrderStatus enum values
             const validStatuses: OrderStatus[] = []
             for (const status of statuses) {
-                if (status === 'PENDING_ADMIN_PAYMENT') {
-                    // This is a special case - map to ADMIN_APPROVED for now
-                    validStatuses.push(OrderStatus.ADMIN_APPROVED)
-                } else if (Object.values(OrderStatus).includes(status as OrderStatus)) {
+                if (Object.values(OrderStatus).includes(status as OrderStatus)) {
                     validStatuses.push(status as OrderStatus)
                 }
             }

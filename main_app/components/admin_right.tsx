@@ -19,6 +19,7 @@ interface SelectedOrder {
   status: string;
   paymentProof?: string;
   adminUpiId?: string;
+  scannedUpiId?: string;
   adminBankDetails?: string;
   user: {
     id: string;
@@ -812,111 +813,97 @@ export default function AdminRight() {
 
           {/* User Bank & UPI Details Section */}
           <div className="bg-[#101010] border border-[#3E3E3E] rounded-md p-4">
-            <h3 className="text-lg font-semibold text-white mb-4 font-montserrat">User Payment Details</h3>
+            <h3 className="text-lg font-semibold text-white mb-4 font-montserrat">
+              {selectedOrder.scannedUpiId ? "Merchant Payout Details" : "User Payment Details"}
+            </h3>
 
-            {/* Tab Buttons */}
-            <div className="flex space-x-3 mb-4">
-              <button
-                onClick={() => setUserDetailsTab('UPI')}
-                className={`py-2 px-4 rounded text-sm font-medium transition-all font-montserrat ${userDetailsTab === 'UPI'
-                  ? 'bg-[#622DBF] text-white'
-                  : 'bg-[#1E1C1C] text-gray-400 border border-gray-600/50 hover:bg-gray-700/50'
-                  }`}
-              >
-                USER UPI ID
-              </button>
-              <button
-                onClick={() => setUserDetailsTab('BANK')}
-                className={`py-2 px-4 rounded text-sm font-medium transition-all font-montserrat ${userDetailsTab === 'BANK'
-                  ? 'bg-[#622DBF] text-white'
-                  : 'bg-[#1E1C1C] text-gray-400 border border-gray-600/50 hover:bg-gray-700/50'
-                  }`}
-              >
-                USER BANK DETAILS
-              </button>
-            </div>
-
-            {/* UPI Details */}
-            {userDetailsTab === 'UPI' && (
+            {selectedOrder.scannedUpiId ? (
+              /* CRITICAL: For QR Scan orders, ONLY show the merchant payout info. Hide everything else to prevent admin payout mistakes. */
               <div className="space-y-4">
-                <div>
-                  <div className="flex items-center space-x-2 mb-2">
-                    <User className="w-4 h-4 text-white" />
-                    <span className="text-gray-400 text-sm font-montserrat">User UPI ID</span>
+                <div className="p-4 bg-blue-600/25 border-2 border-blue-500 rounded-xl shadow-[0_0_20px_rgba(37,99,235,0.3)]">
+                  <div className="flex items-center space-x-3 mb-3">
+                    <div className="w-3 h-3 bg-blue-400 rounded-full animate-pulse shadow-[0_0_10px_rgba(96,165,250,0.8)]"></div>
+                    <span className="text-blue-400 font-black text-sm uppercase tracking-widest italic">⚡ QR MERCHANT PAYOUT ⚡</span>
                   </div>
-                  <div className="flex items-center space-x-2 bg-[#1E1C1C] border border-gray-600/50 rounded-md py-2 px-4">
-                    <span className="text-white text-sm font-montserrat flex-1">
-                      {selectedOrder.user.upiId || 'Not provided'}
-                    </span>
-                    {selectedOrder.user.upiId && (
-                      <button
-                        onClick={() => handleCopy(selectedOrder.user.upiId!, 'userUpi')}
-                        className="text-gray-400 hover:text-white transition-colors"
-                      >
-                        {copiedField === 'userUpi' ? (
-                          <CheckCircle className="w-4 h-4 text-green-400" />
-                        ) : (
-                          <Copy className="w-4 h-4" />
-                        )}
-                      </button>
-                    )}
+                  
+                  <div className="bg-black/50 p-3 rounded-lg border border-blue-500/40 mb-3">
+                    <div className="text-[0.65rem] text-blue-300 uppercase font-black mb-1 tracking-tighter">TRANSFER TO MERCHANT UPI:</div>
+                    <div className="text-xl text-white font-mono font-bold break-all leading-tight selection:bg-blue-500">
+                      {selectedOrder.scannedUpiId}
+                    </div>
                   </div>
-                </div>
 
-                <div>
-                  <div className="flex items-center space-x-2 mb-2">
-                    <span className="text-gray-400 text-sm font-montserrat">Verification Status</span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <div className={`w-2 h-2 rounded-full ${selectedOrder.user.upiId ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                    <span className={`text-sm font-montserrat ${selectedOrder.user.upiId ? 'text-green-500' : 'text-red-500'}`}>
-                      {selectedOrder.user.upiId ? 'Verified' : 'Not Verified'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
+                  <div className="flex flex-col gap-2">
+                    <button
+                      onClick={() => handleCopy(selectedOrder.scannedUpiId!, 'merchantUpi')}
+                      className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg transition-all active:scale-[0.98] shadow-lg border border-blue-400/50"
+                    >
+                      {copiedField === 'merchantUpi' ? (
+                        <><CheckCircle className="w-5 h-5" /> COPIED!</>
+                      ) : (
+                        <><Copy className="w-5 h-5" /> COPY MERCHANT UPI</>
+                      )}
+                    </button>
 
-            {/* Bank Details */}
-            {userDetailsTab === 'BANK' && (
-              <div className="space-y-4">
-                {selectedOrder.user.bankDetails ? (
-                  <>
-                    <div>
-                      <div className="flex items-center space-x-2 mb-2">
-                        <span className="text-gray-400 text-sm font-montserrat">Account Number</span>
-                      </div>
-                      <div className="flex items-center space-x-2 bg-[#1E1C1C] border border-gray-600/50 rounded-md py-2 px-4">
-                        <span className="text-white text-sm font-montserrat flex-1">
-                          ****{selectedOrder.user.bankDetails.accountNumber?.slice(-4) || '****'}
-                        </span>
-                        <button
-                          onClick={() => handleCopy(selectedOrder.user.bankDetails.accountNumber, 'accountNumber')}
-                          className="text-gray-400 hover:text-white transition-colors"
-                        >
-                          {copiedField === 'accountNumber' ? (
-                            <CheckCircle className="w-4 h-4 text-green-400" />
-                          ) : (
-                            <Copy className="w-4 h-4" />
-                          )}
-                        </button>
+                    <div className="bg-yellow-500/15 border border-yellow-500/40 p-3 rounded-lg">
+                      <div className="flex items-start space-x-2">
+                        <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0 mt-0.5" />
+                        <div className="text-[0.72rem] text-yellow-100 font-medium leading-normal">
+                          <span className="font-black text-yellow-400 underline">WARNING:</span> This is a direct QR scan payment. <span className="text-white font-black underline">NEVER</span> use the user&apos;s default UPI ID for this order.
+                        </div>
                       </div>
                     </div>
+                  </div>
+                </div>
 
+                <div className="mt-6 p-4 border border-red-900/20 bg-red-900/5 rounded-lg opacity-40 grayscale pointer-events-none">
+                  <p className="text-xs text-red-300 font-bold mb-2 uppercase tracking-tighter">⚠️ User Personal Data Locked</p>
+                  <p className="text-[0.65rem] text-red-200/60">The user&apos;s default profile data (UPI/Bank) is hidden for this QR transaction to ensure the payout goes to the vendor QR.</p>
+                </div>
+              </div>
+            ) : (
+              /* Regular Buy/Sell Workflow */
+              <>
+                {/* Tab Buttons */}
+                <div className="flex space-x-3 mb-4">
+                  <button
+                    onClick={() => setUserDetailsTab('UPI')}
+                    className={`py-2 px-4 rounded text-sm font-medium transition-all font-montserrat ${userDetailsTab === 'UPI'
+                      ? 'bg-[#622DBF] text-white'
+                      : 'bg-[#1E1C1C] text-gray-400 border border-gray-600/50 hover:bg-gray-700/50'
+                      }`}
+                  >
+                    USER UPI ID
+                  </button>
+                  <button
+                    onClick={() => setUserDetailsTab('BANK')}
+                    className={`py-2 px-4 rounded text-sm font-medium transition-all font-montserrat ${userDetailsTab === 'BANK'
+                      ? 'bg-[#622DBF] text-white'
+                      : 'bg-[#1E1C1C] text-gray-400 border border-gray-600/50 hover:bg-gray-700/50'
+                      }`}
+                  >
+                    USER BANK DETAILS
+                  </button>
+                </div>
+
+                {/* UPI Details */}
+                {userDetailsTab === 'UPI' && (
+                  <div className="space-y-4">
                     <div>
                       <div className="flex items-center space-x-2 mb-2">
-                        <span className="text-gray-400 text-sm font-montserrat">IFSC CODE</span>
+                        <User className="w-4 h-4 text-white" />
+                        <span className="text-gray-400 text-sm font-montserrat">User UPI ID</span>
                       </div>
                       <div className="flex items-center space-x-2 bg-[#1E1C1C] border border-gray-600/50 rounded-md py-2 px-4">
                         <span className="text-white text-sm font-montserrat flex-1">
-                          {selectedOrder.user.bankDetails.ifscCode || 'Not provided'}
+                          {selectedOrder.user.upiId || 'Not provided'}
                         </span>
-                        {selectedOrder.user.bankDetails.ifscCode && (
+                        {selectedOrder.user.upiId && (
                           <button
-                            onClick={() => handleCopy(selectedOrder.user.bankDetails.ifscCode, 'ifsc')}
+                            onClick={() => handleCopy(selectedOrder.user.upiId!, 'userUpi')}
                             className="text-gray-400 hover:text-white transition-colors"
                           >
-                            {copiedField === 'ifsc' ? (
+                            {copiedField === 'userUpi' ? (
                               <CheckCircle className="w-4 h-4 text-green-400" />
                             ) : (
                               <Copy className="w-4 h-4" />
@@ -928,43 +915,108 @@ export default function AdminRight() {
 
                     <div>
                       <div className="flex items-center space-x-2 mb-2">
-                        <span className="text-gray-400 text-sm font-montserrat">Bank Name</span>
+                        <span className="text-gray-400 text-sm font-montserrat">Verification Status</span>
                       </div>
-                      <div className="bg-[#1E1C1C] border border-gray-600/50 rounded-md py-2 px-4">
-                        <span className="text-white text-sm font-montserrat">
-                          {selectedOrder.user.bankDetails.bankName || 'Not provided'}
+                      <div className="flex items-center space-x-2">
+                        <div className={`w-2 h-2 rounded-full ${selectedOrder.user.upiId ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                        <span className={`text-sm font-montserrat ${selectedOrder.user.upiId ? 'text-green-500' : 'text-red-500'}`}>
+                          {selectedOrder.user.upiId ? 'Verified' : 'Not Verified'}
                         </span>
                       </div>
                     </div>
-
-                    <div>
-                      <div className="flex items-center space-x-2 mb-2">
-                        <span className="text-gray-400 text-sm font-montserrat">Branch Name</span>
-                      </div>
-                      <div className="bg-[#1E1C1C] border border-gray-600/50 rounded-md py-2 px-4">
-                        <span className="text-white text-sm font-montserrat">
-                          {selectedOrder.user.bankDetails.branchName || 'Not provided'}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="flex items-center space-x-2 mb-2">
-                        <span className="text-gray-400 text-sm font-montserrat">Account Holder Name</span>
-                      </div>
-                      <div className="bg-[#1E1C1C] border border-gray-600/50 rounded-md py-2 px-4">
-                        <span className="text-white text-sm font-montserrat">
-                          {selectedOrder.user.bankDetails.accountHolderName || 'Not provided'}
-                        </span>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-center py-8">
-                    <p className="text-gray-400 font-montserrat">No bank details provided</p>
                   </div>
                 )}
-              </div>
+
+                {/* Bank Details */}
+                {userDetailsTab === 'BANK' && (
+                  <div className="space-y-4">
+                    {selectedOrder.user.bankDetails ? (
+                      <>
+                        <div>
+                          <div className="flex items-center space-x-2 mb-2">
+                            <span className="text-gray-400 text-sm font-montserrat">Account Number</span>
+                          </div>
+                          <div className="flex items-center space-x-2 bg-[#1E1C1C] border border-gray-600/50 rounded-md py-2 px-4">
+                            <span className="text-white text-sm font-montserrat flex-1">
+                              ****{selectedOrder.user.bankDetails.accountNumber?.slice(-4) || '****'}
+                            </span>
+                            <button
+                              onClick={() => handleCopy(selectedOrder.user.bankDetails.accountNumber, 'accountNumber')}
+                              className="text-gray-400 hover:text-white transition-colors"
+                            >
+                              {copiedField === 'accountNumber' ? (
+                                <CheckCircle className="w-4 h-4 text-green-400" />
+                              ) : (
+                                <Copy className="w-4 h-4" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="flex items-center space-x-2 mb-2">
+                            <span className="text-gray-400 text-sm font-montserrat">IFSC CODE</span>
+                          </div>
+                          <div className="flex items-center space-x-2 bg-[#1E1C1C] border border-gray-600/50 rounded-md py-2 px-4">
+                            <span className="text-white text-sm font-montserrat flex-1">
+                              {selectedOrder.user.bankDetails.ifscCode || 'Not provided'}
+                            </span>
+                            {selectedOrder.user.bankDetails.ifscCode && (
+                              <button
+                                onClick={() => handleCopy(selectedOrder.user.bankDetails.ifscCode, 'ifsc')}
+                                className="text-gray-400 hover:text-white transition-colors"
+                              >
+                                {copiedField === 'ifsc' ? (
+                                  <CheckCircle className="w-4 h-4 text-green-400" />
+                                ) : (
+                                  <Copy className="w-4 h-4" />
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="flex items-center space-x-2 mb-2">
+                            <span className="text-gray-400 text-sm font-montserrat">Bank Name</span>
+                          </div>
+                          <div className="bg-[#1E1C1C] border border-gray-600/50 rounded-md py-2 px-4">
+                            <span className="text-white text-sm font-montserrat">
+                              {selectedOrder.user.bankDetails.bankName || 'Not provided'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="flex items-center space-x-2 mb-2">
+                            <span className="text-gray-400 text-sm font-montserrat">Branch Name</span>
+                          </div>
+                          <div className="bg-[#1E1C1C] border border-gray-600/50 rounded-md py-2 px-4">
+                            <span className="text-white text-sm font-montserrat">
+                              {selectedOrder.user.bankDetails.branchName || 'Not provided'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="flex items-center space-x-2 mb-2">
+                            <span className="text-gray-400 text-sm font-montserrat">Account Holder Name</span>
+                          </div>
+                          <div className="bg-[#1E1C1C] border border-gray-600/50 rounded-md py-2 px-4">
+                            <span className="text-white text-sm font-montserrat">
+                              {selectedOrder.user.bankDetails.accountHolderName || 'Not provided'}
+                            </span>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-center py-8">
+                        <p className="text-gray-400 font-montserrat">No bank details provided</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
             )}
           </div>
 

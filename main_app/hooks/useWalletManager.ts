@@ -4,11 +4,14 @@ import {
   useSwitchChain,
   usePublicClient,
   useWallets,
+  useSmartAccount,
+  useAddress,
 } from "@particle-network/connectkit";
 import { parseUnits, formatUnits, Address } from "viem";
 import { bsc } from "@particle-network/connectkit/chains";
 import { PublicClient } from "viem";
 import { retryWithRPCFailover, rpcManager } from "@/lib/rpcManager";
+import { sendSponsoredContractWrite } from "@/lib/sponsoredTransactions";
 
 const GAS_STATION_ENABLED =
   process.env.NEXT_PUBLIC_GAS_STATION_ENABLED === "true";
@@ -227,10 +230,13 @@ const createSerializableWalletData = (walletInfo: any) => {
 };
 
 export function useWalletManager() {
-  const { address, isConnected, chainId, chain, status } = useAccount();
+  const { address: eoaAddress, isConnected, chainId, chain, status } = useAccount();
+  const smartAddress = useAddress();
+  const address = smartAddress ?? eoaAddress;
   const { switchChainAsync } = useSwitchChain();
   const publicClient = usePublicClient() as PublicClient;
   const [primaryWallet] = useWallets();
+  const smartAccount = useSmartAccount();
   const isConnecting = status === "connecting" || status === "reconnecting";
   const [walletData, setWalletData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -338,11 +344,29 @@ export function useWalletManager() {
     functionName: string;
     args: any[];
   }) => {
-    if (!primaryWallet || !address) throw new Error("Wallet not connected");
-    if (!publicClient) throw new Error("Public client not available");
+    if (!address) throw new Error("Wallet not connected");
 
     setIsPending(true);
     try {
+      if (chainId === bsc.id && smartAccount) {
+        const hash = await sendSponsoredContractWrite({
+          smartAccount,
+          chainId,
+          address: params.address,
+          abi: params.abi,
+          functionName: params.functionName,
+          args: params.args,
+        });
+
+        setTxHash(hash);
+        setIsConfirming(false);
+        setIsPending(false);
+        return hash;
+      }
+
+      if (!primaryWallet) throw new Error("Wallet not connected");
+      if (!publicClient) throw new Error("Public client not available");
+
       const walletClient = primaryWallet.getWalletClient();
       const hash = await walletClient.writeContract({
         ...params,
@@ -427,9 +451,9 @@ export function useWalletManager() {
             raw: usdtBalance || BigInt(0),
             formatted: formattedUsdtBalance,
             symbol: "USDT",
-          },
         },
-        canTrade: (bnbBalance || BigInt(0)) > parseUnits("0.001", 18),
+        },
+        canTrade: true,
         lastUpdated: new Date().toISOString(),
       };
 
@@ -456,32 +480,20 @@ export function useWalletManager() {
     inrAmount: string,
     orderType: string
   ) => {
-    if (!address || !primaryWallet) throw new Error("Wallet not connected");
+    if (!address) throw new Error("Wallet not connected");
     if (!isOnBSC) throw new Error("Please switch to a supported BSC network");
 
     const actualDecimals = usdtDecimals ? Number(usdtDecimals) : 18;
     const usdtAmountWei = parseUnits(usdtAmount, actualDecimals);
     const inrAmountWei = parseUnits(inrAmount, 2);
 
-    setIsPending(true);
     try {
-      const walletClient = primaryWallet.getWalletClient();
-      const hash = await walletClient.writeContract({
+      return await writeContractHelper({
         address: CONTRACTS.P2P_TRADING[56],
         abi: P2P_TRADING_ABI,
         functionName: "createBuyOrder",
         args: [usdtAmountWei, inrAmountWei, orderType],
-        account: address as Address,
-        chain: chain || bsc,
       });
-      setTxHash(hash);
-      setIsConfirming(true);
-
-      if (publicClient && 'waitForTransactionReceipt' in publicClient) {
-        await (publicClient as any).waitForTransactionReceipt({ hash });
-        setIsConfirming(false);
-        setIsPending(false);
-      }
     } catch (error) {
       setIsPending(false);
       setIsConfirming(false);
@@ -749,79 +761,46 @@ export function useWalletManager() {
   const transferUSDT = async (
     to: Address,
     amount: string,
-    useGasStation = true
   ) => {
     if (!address) throw new Error("Wallet not connected");
     if (chainId !== bsc.id) throw new Error("Please switch to BSC Mainnet");
 
-    console.log("💸 Starting USDT transfer on BSC Mainnet:", {
+    console.log("💸 Starting sponsored USDT transfer on BSC Mainnet:", {
       from: address,
       to,
       amount,
       chainId: bsc.id,
-      useGasStation,
     });
 
     try {
-      if (useGasStation && GAS_STATION_ENABLED) {
-        console.log("🚀 Using Gas Station for USDT transfer on BSC Mainnet...");
+      console.log("🚀 Using sponsored smart-account USDT transfer on BSC Mainnet...");
 
-        const response = await fetch("/api/gas-station/admin-transfer", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            adminAddress: address,
-            userAddress: to,
-            usdtAmount: amount,
-            chainId: 56,
-          }),
-        });
+      const actualDecimals = 18;
+      const amountWei = parseUnits(amount, actualDecimals);
+      const usdtContract = CONTRACTS.USDT[56];
 
-        const result = await response.json();
+      const adminBalance = await readContractHelper({
+        address: usdtContract,
+        abi: USDT_ABI,
+        functionName: "balanceOf",
+        args: [address],
+      });
 
-        if (!response.ok) {
-          throw new Error(result.error || "Gas Station transfer failed");
-        }
-
-        console.log(
-          "✅ Gas Station transfer successful (BSC Mainnet):",
-          result.txHash
-        );
-        return result.txHash;
-      } else {
-        console.log("⚡ Using direct USDT transfer on BSC Mainnet...");
-
-        const actualDecimals = 18;
-        const amountWei = parseUnits(amount, actualDecimals);
-        const usdtContract = CONTRACTS.USDT[56];
-
-        const adminBalance = await readContractHelper({
-          address: usdtContract,
-          abi: USDT_ABI,
-          functionName: "balanceOf",
-          args: [address],
-        });
-
-        if (adminBalance < amountWei) {
-          throw new Error(
-            `Insufficient USDT balance. Required: ${amount}, Available: ${formatUnits(
-              adminBalance,
-              actualDecimals
-            )}`
-          );
-        }
-
-        await writeContractHelper({
-          address: usdtContract,
-          abi: USDT_ABI,
-          functionName: "transfer",
-          args: [to, amountWei],
-        });
-
-        console.log(
-          "✅ Direct USDT transfer transaction submitted (BSC Mainnet)"
+      if (adminBalance < amountWei) {
+        throw new Error(
+          `Insufficient USDT balance. Required: ${amount}, Available: ${formatUnits(
+            adminBalance,
+            actualDecimals
+          )}`
         );
       }
+
+      return await writeContractHelper({
+        address: usdtContract,
+        abi: USDT_ABI,
+        functionName: "transfer",
+        args: [to, amountWei],
+      });
     } catch (error) {
       console.error("❌ USDT transfer error:", error);
       throw new Error(
@@ -835,7 +814,6 @@ export function useWalletManager() {
     usdtAmount: string,
     inrAmount: number,
     orderType: string,
-    useGasStation = true
   ) => {
     if (!address) throw new Error("Wallet not connected");
     if (!isOnBSC) throw new Error("Please switch to a supported BSC network");
@@ -844,56 +822,30 @@ export function useWalletManager() {
       usdtAmount,
       inrAmount,
       orderType,
-      useGasStation,
     });
 
     try {
-      if (useGasStation && GAS_STATION_ENABLED) {
-        const response = await fetch("/api/gas-station/create-sell-order", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userAddress: address,
-            usdtAmount,
-            inrAmount,
-            orderType,
-            chainId,
-          }),
-        });
+      const actualDecimals = usdtDecimals ? Number(usdtDecimals) : 18;
+      const usdtAmountWei = parseUnits(usdtAmount, actualDecimals);
+      const contractAddress = CONTRACTS.P2P_TRADING[56];
 
-        const result = await response.json();
-
-        if (!response.ok) {
-          throw new Error(
-            result.error || "Gas Station sell order creation failed"
-          );
-        }
-
-        console.log("✅ Sell order created via Gas Station:", result.txHash);
-        return result.txHash;
-      } else {
-        const actualDecimals = usdtDecimals ? Number(usdtDecimals) : 18;
-        const usdtAmountWei = parseUnits(usdtAmount, actualDecimals);
-        const contractAddress = CONTRACTS.P2P_TRADING[56];
-
-        if (
-          !contractAddress ||
-          contractAddress === "0x0000000000000000000000000000000000000000"
-        ) {
-          throw new Error(
-            `P2P Trading contract not deployed on chain ${chainId}`
-          );
-        }
-
-        await writeContractHelper({
-          address: contractAddress,
-          abi: P2P_TRADING_ABI,
-          functionName: "directSellTransfer",
-          args: [usdtAmountWei, BigInt(inrAmount * 100), orderType, address],
-        });
-
-        console.log("✅ Direct sell order created");
+      if (
+        !contractAddress ||
+        contractAddress === "0x0000000000000000000000000000000000000000"
+      ) {
+        throw new Error(
+          `P2P Trading contract not deployed on chain ${chainId}`
+        );
       }
+
+      await writeContractHelper({
+        address: contractAddress,
+        abi: P2P_TRADING_ABI,
+        functionName: "directSellTransfer",
+        args: [usdtAmountWei, BigInt(inrAmount * 100), orderType, address],
+      });
+
+      console.log("✅ Direct sell order created");
     } catch (error) {
       console.error("❌ Sell order creation error:", error);
       throw error;
@@ -904,7 +856,6 @@ export function useWalletManager() {
     usdtAmount: string,
     inrAmount: number,
     orderType: string,
-    useGasStation = true
   ) => {
     if (!address) throw new Error("Wallet not connected");
     if (!isOnBSC) throw new Error("Please switch to a supported BSC network");
@@ -913,47 +864,21 @@ export function useWalletManager() {
       usdtAmount,
       inrAmount,
       orderType,
-      useGasStation,
     });
 
     try {
-      if (useGasStation && GAS_STATION_ENABLED) {
-        const response = await fetch("/api/gas-station/create-buy-order", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userAddress: address,
-            usdtAmount,
-            inrAmount,
-            orderType,
-            chainId,
-          }),
-        });
+      const actualDecimals = usdtDecimals ? Number(usdtDecimals) : 18;
+      const usdtAmountWei = parseUnits(usdtAmount, actualDecimals);
+      const contractAddress = CONTRACTS.P2P_TRADING[56];
 
-        const result = await response.json();
+      await writeContractHelper({
+        address: contractAddress,
+        abi: P2P_TRADING_ABI,
+        functionName: "createBuyOrder",
+        args: [usdtAmountWei, BigInt(inrAmount * 100), orderType],
+      });
 
-        if (!response.ok) {
-          throw new Error(
-            result.error || "Gas Station buy order creation failed"
-          );
-        }
-
-        console.log("✅ Buy order created via Gas Station:", result.txHash);
-        return result.txHash;
-      } else {
-        const actualDecimals = usdtDecimals ? Number(usdtDecimals) : 18;
-        const usdtAmountWei = parseUnits(usdtAmount, actualDecimals);
-        const contractAddress = CONTRACTS.P2P_TRADING[56];
-
-        await writeContractHelper({
-          address: contractAddress,
-          abi: P2P_TRADING_ABI,
-          functionName: "createBuyOrder",
-          args: [usdtAmountWei, BigInt(inrAmount * 100), orderType],
-        });
-
-        console.log("✅ Direct buy order created");
-      }
+      console.log("✅ Direct buy order created");
     } catch (error) {
       console.error("❌ Buy order creation error:", error);
       throw error;
@@ -1185,6 +1110,8 @@ export function useWalletManager() {
 
   return {
     address,
+    eoaAddress,
+    smartWalletAddress: smartAddress,
     isConnected,
     isConnecting,
     chainId,
