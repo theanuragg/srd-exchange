@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
       type: getOrderTypeLabel(order.orderType),
       orderType: order.orderType,
       price: Number(order.buyRate || order.sellRate || 0),
-      currency: order.orderType === 'BUY_CDM' ? 'CDM' : 'UPI',
+      currency: order.orderType.includes('CDM') ? 'CDM' : 'UPI',
       status: order.status,
       user: order.user,
       createdAt: order.createdAt.toISOString()
@@ -126,7 +126,7 @@ export async function POST(request: NextRequest) {
     if (status === 'BLOCKCHAIN_PENDING') {
       validStatus = OrderStatus.PENDING;
     } else if (status === 'PENDING_ADMIN_PAYMENT') {
-      validStatus = OrderStatus.ADMIN_APPROVED; // Map to existing valid status
+      validStatus = OrderStatus.PENDING_ADMIN_PAYMENT;
     } else if (status && Object.values(OrderStatus).includes(status as OrderStatus)) {
       validStatus = status as OrderStatus;
     }
@@ -270,7 +270,7 @@ export async function POST(request: NextRequest) {
         usdtAmount: usdtAmount ? parseFloat(usdtAmount) : null,
         buyRate: buyRate ? parseFloat(buyRate) : null,
         sellRate: sellRate ? parseFloat(sellRate) : null,
-        blockchainOrderId: blockchainOrderId || null,
+        blockchainOrderId: finalBlockchainId,
         status: validStatus // Use the mapped valid status
       },
       include: {
@@ -297,7 +297,7 @@ export async function POST(request: NextRequest) {
       type: orderType.replace('_', ' '),
       orderType: order.orderType,
       price: Number(order.buyRate || sellRate || 0),
-      currency: order.orderType === 'BUY_CDM' ? 'CDM' : 'UPI',
+      currency: order.orderType.includes('CDM') ? 'CDM' : 'UPI',
       status: order.status,
       blockchainOrderId: order.blockchainOrderId,
       user: order.user,
@@ -394,6 +394,7 @@ function getOrderTypeLabel(orderType: string): string {
     case 'BUY_CDM':
       return 'Buy Order'
     case 'SELL':
+    case 'SELL_CDM':
       return 'Sell Order'
     default:
       return orderType

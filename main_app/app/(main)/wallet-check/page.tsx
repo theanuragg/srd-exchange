@@ -3,6 +3,8 @@
 import { useSmartAccount, useAccount } from '@particle-network/connectkit';
 import { particleAuth } from '@particle-network/auth-core';
 import { useEffect, useState } from 'react';
+import { recoverAddress } from 'viem';
+import { keccak256, toBytes } from 'viem';
 import AuthGuard from '@/components/auth/AuthGuard';
 import SimpleNav from '@/components/simple-nav';
 
@@ -13,20 +15,46 @@ const CHAINS = [
   { name: 'Arbitrum One', chainId: 42161,  abbr: 'ARB',  explorer: 'https://arbiscan.io/address/' },
   { name: 'Optimism',     chainId: 10,     abbr: 'OP',   explorer: 'https://optimistic.etherscan.io/address/' },
   { name: 'Polygon',      chainId: 137,    abbr: 'POL',  explorer: 'https://polygonscan.com/address/' },
-  { name: 'Cronos',       chainId: 25,     abbr: 'CRO',  explorer: 'https://cronoscan.com/address/' },
   { name: 'Avalanche',    chainId: 43114,  abbr: 'AVAX', explorer: 'https://snowtrace.io/address/' },
-  { name: 'Scroll',       chainId: 534352, abbr: 'SCR',  explorer: 'https://scrollscan.com/address/' },
+  
 ];
 
 export default function WalletCheckPage() {
   const smartAccount = useSmartAccount();
   const { address: eoaAddress, isConnected } = useAccount();
   const [smartWalletAddress, setSmartWalletAddress] = useState<string | null>(null);
+  const [accountInfo, setAccountInfo] = useState<Record<string, string> | null>(null);
   const [solanaAddress, setSolanaAddress] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [solanaLoading, setSolanaLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [solanaError, setSolanaError] = useState<string | null>(null);
+
+  const [onChainEntryPoint, setOnChainEntryPoint] = useState<string | null>(null);
+  const [signatureTest, setSignatureTest] = useState<string | null>(null);
+  const [signatureTestLoading, setSignatureTestLoading] = useState(false);
+
+  useEffect(() => {
+    if (!smartAccount || !isConnected || !eoaAddress) return;
+    setSignatureTestLoading(true);
+    setSignatureTest(null);
+    const testHash = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef" as `0x${string}`;
+    (async () => {
+      try {
+        const sig = await (smartAccount as any).signUserOpHash(testHash);
+        const { hashMessage, recoverAddress } = await import("viem");
+        const ethSignedHash = hashMessage({ raw: testHash });
+        const recovered = await recoverAddress({ hash: ethSignedHash, signature: sig });
+        const match = recovered.toLowerCase() === eoaAddress.toLowerCase();
+        setSignatureTest(
+          `sigLen=${sig.length} recovered=${recovered} match=${match}`
+        );
+      } catch (e: any) {
+        setSignatureTest("error: " + (e?.message || String(e)));
+      }
+      setSignatureTestLoading(false);
+    })();
+  }, [smartAccount, isConnected, eoaAddress]);
 
   useEffect(() => {
     if (!smartAccount || !isConnected) return;
@@ -34,11 +62,47 @@ export default function WalletCheckPage() {
     setLoading(true);
     setError(null);
 
-    smartAccount.getAddress()
-      .then((addr: string) => setSmartWalletAddress(addr))
+    Promise.all([
+      smartAccount.getAddress(),
+      smartAccount.getAccount().catch(() => null),
+    ])
+      .then(([addr, info]) => {
+        setSmartWalletAddress(addr);
+        if (info) {
+          setAccountInfo({
+            entryPoint: (info as any).entryPointAddress,
+            factory: (info as any).factoryAddress,
+            implementation: (info as any).implementationAddress,
+            deployed: String((info as any).isDeployed),
+          });
+        }
+      })
       .catch((err: any) => setError(err?.message || 'Failed to get smart wallet address'))
       .finally(() => setLoading(false));
   }, [smartAccount, isConnected]);
+
+  useEffect(() => {
+    if (!smartWalletAddress) return;
+    fetch("https://bnb-mainnet.g.alchemy.com/v2/tMv_F-SWjUGB-xx4J0hle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "eth_call",
+        params: [{ to: smartWalletAddress, data: "0xb0d691fe" }, "latest"],
+      }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.result && d.result !== "0x" && d.result.length >= 66) {
+          setOnChainEntryPoint("0x" + d.result.slice(-40));
+        } else {
+          setOnChainEntryPoint("NOT_FOUND");
+        }
+      })
+      .catch(() => setOnChainEntryPoint("CALL_FAILED"));
+  }, [smartWalletAddress]);
 
   useEffect(() => {
     if (!isConnected) return;
@@ -104,6 +168,22 @@ export default function WalletCheckPage() {
             {!isConnected && <div className="text-white/40 text-sm">Not connected</div>}
           </div>
 
+          {/* Account Info (AA config from Particle backend) */}
+          {accountInfo && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-4">
+              <div className="text-xs text-amber-300 mb-2">AA Account Config (from Particle backend — BSC)</div>
+              <div className="space-y-1 font-mono text-xs text-white/70">
+                <div>entryPoint (Particle): <span className="text-white/90">{accountInfo.entryPoint}</span></div>
+                <div>entryPoint (on-chain call): <span className={"text-white/90 " + (onChainEntryPoint === accountInfo.entryPoint ? "text-green-400" : "text-red-400")}>
+                  {onChainEntryPoint || "checking..."}
+                </span></div>
+                <div>factory: <span className="text-white/90">{accountInfo.factory}</span></div>
+                <div>implementation: <span className="text-white/90">{accountInfo.implementation}</span></div>
+                <div>deployed: <span className="text-white/90">{accountInfo.deployed}</span></div>
+              </div>
+            </div>
+          )}
+
           {/* Solana Wallet */}
           <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 mb-8">
             <div className="text-xs text-green-300 mb-1">Solana EOA Address (Particle Auth users only)</div>
@@ -120,8 +200,17 @@ export default function WalletCheckPage() {
                 >
                   View on Solscan →
                 </a>
-              </div>
+            </div>
+          )}
+
+          {/* Signature Test */}
+          <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-xl p-4 mb-4">
+            <div className="text-xs text-cyan-300 mb-2">AA Signature Recovery Test</div>
+            {signatureTestLoading && <div className="text-white/40 text-sm">Testing...</div>}
+            {signatureTest && (
+              <div className="font-mono text-xs text-white/70 break-all">{signatureTest}</div>
             )}
+          </div>
           </div>
 
           {/* Chain table */}

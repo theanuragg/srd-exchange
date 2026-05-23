@@ -1,0 +1,1 @@
+ALTER TYPE "public"."OrderType" ADD VALUE IF NOT EXISTS 'SELL_CDM';
