@@ -78,7 +78,7 @@ export const getSignedUrlForS3 = async (key: string): Promise<string> => {
 
     console.log('🔗 Generating signed URL for:', key);
     const command = new GetObjectCommand(params);
-    const signedUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+    const signedUrl = await getSignedUrl(s3Client as any, command, { expiresIn: 3600 });
     console.log('✅ Signed URL generated successfully');
 
     return signedUrl;

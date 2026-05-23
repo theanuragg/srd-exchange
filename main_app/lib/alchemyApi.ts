@@ -10,8 +10,6 @@ const ALCHEMY_CHAINS = [
     { id: 10,     name: 'Optimism',  rpc: `https://opt-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}`,     explorer: 'https://optimistic.etherscan.io/tx/',  logo: 'https://assets.coingecko.com/coins/images/25244/small/Optimism.png',                                                                            color: '#FF0420' },
     { id: 137,    name: 'Polygon',   rpc: `https://polygon-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}`, explorer: 'https://polygonscan.com/tx/',           logo: 'https://assets.coingecko.com/coins/images/4713/small/polygon.png',                                                                               color: '#8247E5' },
     { id: 43114,  name: 'Avalanche', rpc: `https://avax-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}`,    explorer: 'https://snowtrace.io/tx/',             logo: 'https://assets.coingecko.com/coins/images/12559/small/Avalanche_Circle_RedWhite_Trans.png',                                                      color: '#E84142' },
-    { id: 534352, name: 'Scroll',    rpc: `https://scroll-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}`,  explorer: 'https://scrollscan.com/tx/',           logo: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/scroll/info/logo.png',                                                                               color: '#FFDBB1' },
-    { id: 25,     name: 'Cronos',    rpc: `https://cronos-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}`,  explorer: 'https://cronoscan.com/tx/',            logo: 'https://assets.coingecko.com/coins/images/7310/small/cro_token_logo.png',                                                                        color: '#002D74' },
 ];
 
 async function fetchEvmChainHistory(

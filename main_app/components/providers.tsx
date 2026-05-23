@@ -25,9 +25,13 @@ const queryClient = new QueryClient({
 
 function SidebarWrapper({ children }: { children: ReactNode }) {
   const { isSidebarOpen, setIsSidebarOpen } = useSidebar();
-  const { walletData, refetchBalances } = useWalletManager();
-  const { isConnected, address: eoaAddress } = useAccount();
+  const { walletData, refetchBalances, eoaAddress: realEoaAddress } = useWalletManager();
+  const { isConnected } = useAccount();
   const [solanaAddress, setSolanaAddress] = useState<string | null>(null);
+
+  // realEoaAddress from useWalletManager uses useAccount().address which is the true EOA
+  // This is different from the smart wallet address in smart account mode
+  const eoaAddress = realEoaAddress ?? '';
 
   // Refetch balances when sidebar opens
   useEffect(() => {

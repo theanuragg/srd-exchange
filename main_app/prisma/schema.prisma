@@ -8,16 +8,16 @@ datasource db {
 }
 
 model User {
-  id                 String       @id @default(cuid())
-  walletAddress      String       @unique
-  role               UserRole     @default(USER)
+  id                 String          @id @default(cuid())
+  walletAddress      String          @unique
+  role               UserRole        @default(USER)
   lastLoginAt        DateTime?
-  createdAt          DateTime     @default(now())
-  updatedAt          DateTime     @updatedAt
-  profileCompleted   Boolean      @default(false)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  profileCompleted   Boolean         @default(false)
   upiId              String?
-  smartWalletAddress String?      @unique
-  solanaAddress      String?      @unique
+  smartWalletAddress String?         @unique
+  solanaAddress      String?         @unique
   bankDetails        BankDetails?
   orders             Order[]
   qrTransactions     QRTransaction[]
@@ -80,6 +80,37 @@ model Rate {
   @@map("rates")
 }
 
+model FeatureFlag {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  enabled   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("feature_flags")
+}
+
+model QRTransaction {
+  id               String              @id @default(cuid())
+  userId           String
+  amountINR        Decimal
+  amountUSDT       Decimal
+  fee              Decimal             @default(0)
+  transactionHash  String?             @unique
+  status           QRTransactionStatus @default(PENDING)
+  qrCodeData       String?
+  adminCompletedAt DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  sellRate         Decimal?
+  userOpHash       String?             @unique
+  scannedUpiId     String?
+  adminNotes       String?
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("qr_transactions")
+}
+
 enum UserRole {
   USER
   ADMIN
@@ -89,6 +120,7 @@ enum OrderType {
   BUY_UPI
   BUY_CDM
   SELL
+  SELL_CDM
 }
 
 enum OrderStatus {
@@ -113,35 +145,9 @@ enum CurrencyType {
   CDM
 }
 
-model FeatureFlag {
-  id        String   @id @default(cuid())
-  key       String   @unique
-  enabled   Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("feature_flags")
-}
-
-model QRTransaction {
-  id               String              @id @default(cuid())
-  userId           String
-  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  amountINR        Decimal
-  amountUSDT       Decimal
-  fee              Decimal             @default(0)
-  transactionHash  String?             @unique
-  status           QRTransactionStatus @default(PENDING)
-  qrCodeData       String?
-  adminCompletedAt DateTime?
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @updatedAt
-
-  @@map("qr_transactions")
-}
-
 enum QRTransactionStatus {
   PENDING
   COMPLETED
   CANCELLED
+  APPROVED
 }

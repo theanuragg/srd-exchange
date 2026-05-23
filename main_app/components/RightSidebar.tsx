@@ -17,13 +17,14 @@ import {
 import { FC, useState, useEffect } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import Image from 'next/image'
-import { useDisconnect, useSwitchChain, useWallets, usePublicClient } from '@particle-network/connectkit'
+import { useDisconnect, useSwitchChain, useWallets, useSmartAccount, useAccount } from '@particle-network/connectkit'
 import { particleAuth } from '@particle-network/auth-core'
 import { parseUnits, erc20Abi } from 'viem'
 import { ethers } from 'ethers'
 import { useRouter } from 'next/navigation'
 import { useChainAssets } from '@/hooks/useChainAssets'
 import { CHAIN_CONFIGS, formatBalance, formatUsd, type TokenAsset } from '@/lib/ankrApi'
+import { sendSponsoredContractWrite, sendSponsoredSmartAccountTransaction } from '@/lib/sponsoredTransactions'
 
 
 interface RightSidebarProps {
@@ -65,17 +66,32 @@ const [selectedAsset, setSelectedAsset] = useState<TokenAsset | null>(null)
     const [showHistoryChainDropdown, setShowHistoryChainDropdown] = useState(false)
     const [historyTypeFilter, setHistoryTypeFilter] = useState<'All' | 'Deposit' | 'Withdraw'>('All')
 
-    // Show Solana address when Solana chain is selected, EOA address otherwise
-    const displayAddress = selectedChainId === 101 ? solanaAddress : eoaAddress
     const wallets = useWallets()
     const primaryWallet = wallets[0]
+    const smartAccount = useSmartAccount()
     const { disconnect } = useDisconnect()
     const { switchChainAsync } = useSwitchChain()
     const router = useRouter()
 
+    const { isConnected } = useAccount()
+
+    // Resolve smart wallet address from Particle smart account
+    const [smartWalletAddress, setSmartWalletAddress] = useState<string | null>(null)
+    useEffect(() => {
+        if (!smartAccount || !isConnected || !eoaAddress) return
+        smartAccount.getAccount().then(acc => {
+            if (acc?.smartAccountAddress) setSmartWalletAddress(acc.smartAccountAddress)
+        }).catch(() => {})
+    }, [smartAccount, isConnected, eoaAddress])
+
+    // Show smart wallet address when available (for EVM), EOA as fallback, Solana for Solana chain
+    const displayAddress = selectedChainId === 101 ? solanaAddress : (smartWalletAddress ?? eoaAddress)
+
+    // Fetch balances for smart wallet (where trading happens) — the user only sees this one balance
+    const tradingAddress = smartWalletAddress ?? eoaAddress
     const selectedChain = CHAIN_CONFIGS.find(c => c.id === selectedChainId) ?? CHAIN_CONFIGS[1]
     const { assets, totalUsd, isLoading: assetsLoading, refetch: refetchAssets } = useChainAssets(
-        selectedChainId === 101 ? null : eoaAddress,
+        selectedChainId === 101 ? null : tradingAddress,
         selectedChainId,
         solanaAddress
     )
@@ -118,6 +134,28 @@ const [selectedAsset, setSelectedAsset] = useState<TokenAsset | null>(null)
         if (!ethers.isAddress(recipient)) throw new Error('Invalid recipient address');
         const amountNum = parseFloat(amount);
         if (isNaN(amountNum) || amountNum <= 0) throw new Error('Enter a valid amount');
+
+        if (selectedChainId === 56 && smartAccount) {
+            if (asset.isNative) {
+                return sendSponsoredSmartAccountTransaction({
+                    smartAccount,
+                    chainId: 56,
+                    transaction: {
+                        to: recipient as `0x${string}`,
+                        value: `0x${parseUnits(amount, asset.decimals).toString(16)}` as `0x${string}`,
+                    },
+                })
+            }
+
+            return sendSponsoredContractWrite({
+                smartAccount,
+                chainId: 56,
+                address: asset.contractAddress as `0x${string}`,
+                abi: erc20Abi,
+                functionName: 'transfer',
+                args: [recipient as `0x${string}`, parseUnits(amount, asset.decimals)],
+            } as any)
+        }
 
         if (!primaryWallet) throw new Error('Wallet not available');
         const walletClient = await primaryWallet.getWalletClient();
@@ -200,7 +238,7 @@ const [selectedAsset, setSelectedAsset] = useState<TokenAsset | null>(null)
                 setTxHash(hash)
                 setSendAmount('')
                 setRecipientAddress('')
-                setTimeout(() => { if (eoaAddress) fetchOnChainHistory(eoaAddress) }, 5000)
+                setTimeout(() => { if (tradingAddress) fetchOnChainHistory(tradingAddress) }, 5000)
             } else {
                 // Solana
                 if (!selectedSolanaAsset) throw new Error('Select an asset to send')
@@ -241,11 +279,11 @@ const [selectedAsset, setSelectedAsset] = useState<TokenAsset | null>(null)
     }
 
     useEffect(() => {
-        if (isOpen && eoaAddress) {
-            console.log('🔄 Sidebar opened, fetching history for EOA:', eoaAddress)
-            fetchOnChainHistory(eoaAddress)
+        if (isOpen && tradingAddress) {
+            console.log('🔄 Sidebar opened, fetching history:', tradingAddress)
+            fetchOnChainHistory(tradingAddress)
         }
-    }, [isOpen, eoaAddress])
+    }, [isOpen, tradingAddress])
 
     useEffect(() => {
         const fetchRates = async () => {
@@ -402,8 +440,26 @@ const [selectedAsset, setSelectedAsset] = useState<TokenAsset | null>(null)
                                             initial={{ opacity: 0, y: -6, scale: 0.97 }}
                                             animate={{ opacity: 1, y: 0, scale: 1 }}
                                             exit={{ opacity: 0, y: -6, scale: 0.97 }}
-                                            className="absolute top-full mt-1 right-0 w-44 bg-[#111] border border-white/10 rounded-xl overflow-hidden z-50 shadow-xl"
+                                            className="absolute top-full mt-1 right-0 w-56 bg-[#111] border border-white/10 rounded-xl overflow-hidden z-50 shadow-xl"
                                         >
+                                            <div className="px-3 py-2.5 border-b border-white/10 space-y-1.5">
+                                                {smartWalletAddress && smartWalletAddress !== eoaAddress && (
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <span className="text-[11px] text-white/40 font-medium shrink-0">Smart</span>
+                                                        <button onClick={() => copyToClipboard(smartWalletAddress)} className="text-[11px] text-white/70 hover:text-white font-mono truncate">
+                                                            {formatAddress(smartWalletAddress)}
+                                                        </button>
+                                                    </div>
+                                                )}
+                                                {eoaAddress && (
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <span className="text-[11px] text-white/40 font-medium shrink-0">EOA</span>
+                                                        <button onClick={() => copyToClipboard(eoaAddress)} className="text-[11px] text-white/70 hover:text-white font-mono truncate">
+                                                            {formatAddress(eoaAddress)}
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
                                             <button
                                                 onClick={handleLogout}
                                                 className="w-full flex items-center gap-2.5 px-3 py-2.5 text-red-400 hover:bg-red-500/10 transition-colors text-sm font-medium"
@@ -435,7 +491,7 @@ const [selectedAsset, setSelectedAsset] = useState<TokenAsset | null>(null)
     }
 
     const renderReceiveView = () => {
-        const receiveAddr = receiveMode === 'SOL' ? solanaAddress : eoaAddress
+        const receiveAddr = receiveMode === 'SOL' ? solanaAddress : displayAddress
         return (
         <div className="flex-1 overflow-y-auto [&::-webkit-scrollbar]:hidden animate-in fade-in slide-in-from-right-4 duration-300">
             <div className="min-h-full flex flex-col items-center justify-center gap-6 px-6 pt-10 pb-28">
