@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 interface ModalState {
   orderId: string;
@@ -12,17 +12,15 @@ interface ModalState {
 export const useModalState = () => {
   const [modalStates, setModalStates] = useState<Record<string, ModalState>>({});
 
-  // Load modal states from localStorage on mount
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const savedStates = localStorage.getItem('orderModalStates');
       if (savedStates) {
         try {
           const parsed = JSON.parse(savedStates);
-          // Filter out states older than 24 hours
           const now = Date.now();
           const validStates = Object.entries(parsed).reduce((acc, [key, state]: [string, any]) => {
-            if (now - state.lastUpdated < 24 * 60 * 60 * 1000) { // 24 hours
+            if (now - state.lastUpdated < 24 * 60 * 60 * 1000) {
               acc[key] = state;
             }
             return acc;
@@ -35,20 +33,14 @@ export const useModalState = () => {
     }
   }, []);
 
-  // Save modal states to localStorage whenever they change
   useEffect(() => {
     if (typeof window !== 'undefined') {
       localStorage.setItem('orderModalStates', JSON.stringify(modalStates));
     }
   }, [modalStates]);
 
-  const saveModalState = (orderId: string, modalType: ModalState['modalType'], currentStep: number, formData: any = {}, adminPaymentDetails: any = null) => {
-    if (!orderId) {
-      console.warn('Cannot save modal state: orderId is undefined');
-      return;
-    }
-    
-    console.log('💾 Saving modal state:', { orderId, modalType, currentStep, adminPaymentDetails: !!adminPaymentDetails });
+  const saveModalState = useCallback((orderId: string, modalType: ModalState['modalType'], currentStep: number, formData: any = {}, adminPaymentDetails: any = null) => {
+    if (!orderId) return;
     setModalStates(prev => ({
       ...prev,
       [orderId]: {
@@ -60,30 +52,27 @@ export const useModalState = () => {
         lastUpdated: Date.now()
       }
     }));
-  };
+  }, []);
 
-  const getModalState = (orderId: string): ModalState | null => {
-    if (!orderId) {
-      console.warn('Cannot get modal state: orderId is undefined');
-      return null;
-    }
+  const getModalState = useCallback((orderId: string): ModalState | null => {
+    if (!orderId) return null;
     return modalStates[orderId] || null;
-  };
+  }, [modalStates]);
 
-  const clearModalState = (orderId: string) => {
+  const clearModalState = useCallback((orderId: string) => {
     setModalStates(prev => {
       const newState = { ...prev };
       delete newState[orderId];
       return newState;
     });
-  };
+  }, []);
 
-  const clearAllModalStates = () => {
+  const clearAllModalStates = useCallback(() => {
     setModalStates({});
     if (typeof window !== 'undefined') {
       localStorage.removeItem('orderModalStates');
     }
-  };
+  }, []);
 
   return {
     saveModalState,

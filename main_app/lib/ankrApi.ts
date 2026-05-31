@@ -7,8 +7,7 @@ export const CHAIN_ID_TO_ANKR: Record<number, string> = {
   10:     'optimism',
   137:    'polygon',
   43114:  'avalanche',
-  534352: 'scroll',
-  25:     'cronos',
+
 };
 
 export const CHAIN_CONFIGS = [
@@ -19,8 +18,7 @@ export const CHAIN_CONFIGS = [
   { id: 10,     name: 'Optimism',  symbol: 'ETH',  abbr: 'OP',   explorer: 'https://optimistic.etherscan.io', color: '#FF0420', logo: 'https://assets.coingecko.com/coins/images/25244/small/Optimism.png' },
   { id: 137,    name: 'Polygon',   symbol: 'POL',  abbr: 'POL',  explorer: 'https://polygonscan.com',         color: '#8247E5', logo: 'https://assets.coingecko.com/coins/images/4713/small/polygon.png' },
   { id: 43114,  name: 'Avalanche', symbol: 'AVAX', abbr: 'AVAX', explorer: 'https://snowtrace.io',            color: '#E84142', logo: 'https://assets.coingecko.com/coins/images/12559/small/Avalanche_Circle_RedWhite_Trans.png' },
-  { id: 534352, name: 'Scroll',    symbol: 'ETH',  abbr: 'SCR',  explorer: 'https://scrollscan.com',          color: '#FFDBB1', logo: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/scroll/info/logo.png' },
-  { id: 25,     name: 'Cronos',    symbol: 'CRO',  abbr: 'CRO',  explorer: 'https://cronoscan.com',           color: '#002D74', logo: 'https://assets.coingecko.com/coins/images/7310/small/cro_token_logo.png' },
+
   { id: 101,    name: 'Solana',    symbol: 'SOL',  abbr: 'SOL',  explorer: 'https://solscan.io',              color: '#9945FF', logo: 'https://assets.coingecko.com/coins/images/4128/small/solana.png' },
 ];
 
@@ -42,8 +40,8 @@ export async function fetchChainAssets(
   chainId: number
 ): Promise<TokenAsset[]> {
   const res = await fetch(`/api/wallet/assets?address=${encodeURIComponent(walletAddress)}&chainId=${chainId}`);
-  const data = await res.json().catch(() => ({ assets: [] }));
-  if (!res.ok && !data.assets) {
+  const data = await res.json().catch(() => ({ assets: [], error: 'Failed to parse response' }));
+  if (!res.ok) {
     throw new Error(data?.error || `Failed to fetch assets (${res.status})`);
   }
   return data.assets ?? [];

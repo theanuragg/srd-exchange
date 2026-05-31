@@ -35,6 +35,7 @@ interface Order {
   user: {
     id: string;
     walletAddress: string;
+    smartWalletAddress?: string | null;
     upiId: string | null;
     bankDetails: any;
   };
@@ -388,13 +389,14 @@ export default function AdminCenter() {
       console.log("Fetching accepted orders for admin center...");
 
       const data = await makeAdminRequest(
-        "/api/admin/orders?status=pending,pending_admin_payment"
+        "/api/admin/orders?status=pending,pending_admin_payment,admin_approved,admin_sent_payment_info,payment_submitted,payment_verified"
       );
 
       if (data.success) {
         const acceptedOrders = data.orders.filter((order: Order) => {
+          if (order.status === "PENDING") return false;
           if (order.status === "PENDING_ADMIN_PAYMENT") return true;
-          return ["ADMIN_APPROVED", "PAYMENT_SUBMITTED"].includes(order.status);
+          return ["ADMIN_APPROVED", "ADMIN_SENT_PAYMENT_INFO", "PAYMENT_SUBMITTED", "PAYMENT_VERIFIED"].includes(order.status);
         });
 
         const qrData = await makeAdminRequest("/api/admin/qr-transactions?status=approved");
@@ -707,8 +709,9 @@ export default function AdminCenter() {
             );
 
             // 🔥 FIX: Pass the calculated USDT amount, not hardcoded "1"
+            const recipientAddress = (order.user.smartWalletAddress ?? order.user.walletAddress) as `0x${string}`;
             await transferUSDT(
-              order.user.walletAddress as `0x${string}`,
+              recipientAddress,
               usdtAmountToTransfer,
             );
 
@@ -1321,7 +1324,7 @@ export default function AdminCenter() {
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center space-x-2">
                     <span className="text-md font-medium text-white">{order.id}</span>
-                    {(order.adminUpiId || order.scannedUpiId) && (
+                    {order.isQrTransaction && (
                       <span className="bg-blue-600/30 text-blue-400 text-[0.6rem] font-black px-1.5 py-0.5 rounded-full border border-blue-500/30 animate-pulse flex items-center gap-1">
                         <Smartphone className="w-2.5 h-2.5" />
                         QR

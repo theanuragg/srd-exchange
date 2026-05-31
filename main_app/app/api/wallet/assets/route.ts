@@ -10,20 +10,29 @@ const ALCHEMY_RPC: Record<number, string> = {
   10:     'https://opt-mainnet.g.alchemy.com/v2',
   137:    'https://polygon-mainnet.g.alchemy.com/v2',
   43114:  'https://avax-mainnet.g.alchemy.com/v2',
-  534352: 'https://scroll-mainnet.g.alchemy.com/v2',
-  25:     'https://cronos-mainnet.g.alchemy.com/v2',
+};
+
+// Public RPC fallbacks for native balance when Alchemy fails
+const RPC_FALLBACK: Record<number, string> = {
+  1:     'https://eth.drpc.org',
+  56:    'https://bsc-dataseed.bnbchain.org',
+  8453:  'https://mainnet.base.org',
+  42161: 'https://arb1.arbitrum.io/rpc',
+  10:    'https://mainnet.optimism.io',
+  137:   'https://polygon-rpc.com',
+  43114: 'https://api.avax.network/ext/bc/C/rpc',
 };
 
 // DeFiLlama chain name per chain ID (for price lookups)
 const LLAMA_CHAIN: Record<number, string> = {
   1: 'ethereum', 56: 'bsc', 8453: 'base', 42161: 'arbitrum',
-  10: 'optimism', 137: 'polygon', 43114: 'avax', 534352: 'scroll', 25: 'cronos',
+  10: 'optimism', 137: 'polygon', 43114: 'avax',
 };
 
 // CoinGecko ID for native token prices via DeFiLlama
 const NATIVE_COINGECKO: Record<number, string> = {
   1: 'ethereum', 56: 'binancecoin', 8453: 'ethereum', 42161: 'ethereum',
-  10: 'ethereum', 137: 'matic-network', 43114: 'avalanche-2', 534352: 'ethereum', 25: 'crypto-com-chain',
+  10: 'ethereum', 137: 'matic-network', 43114: 'avalanche-2',
 };
 
 // Native token info per chain
@@ -35,14 +44,12 @@ const NATIVE: Record<number, { symbol: string; name: string; decimals: number; l
   10:     { symbol: 'ETH',  name: 'Ethereum',  decimals: 18, logo: 'https://assets.coingecko.com/coins/images/279/small/ethereum.png' },
   137:    { symbol: 'POL',  name: 'Polygon',   decimals: 18, logo: 'https://assets.coingecko.com/coins/images/4713/small/polygon.png' },
   43114:  { symbol: 'AVAX', name: 'Avalanche', decimals: 18, logo: 'https://assets.coingecko.com/coins/images/12559/small/Avalanche_Circle_RedWhite_Trans.png' },
-  534352: { symbol: 'ETH',  name: 'Ethereum',  decimals: 18, logo: 'https://assets.coingecko.com/coins/images/279/small/ethereum.png' },
-  25:     { symbol: 'CRO',  name: 'Cronos',    decimals: 18, logo: 'https://assets.coingecko.com/coins/images/7310/small/cro_token_logo.png' },
 };
 
 // TrustWallet blockchain names for logo fallback
 const TW_CHAIN: Record<number, string> = {
   1: 'ethereum', 56: 'smartchain', 8453: 'base', 42161: 'arbitrum',
-  10: 'optimism', 137: 'polygon', 43114: 'avalanchec', 534352: 'scroll', 25: 'cronos',
+  10: 'optimism', 137: 'polygon', 43114: 'avalanchec',
 };
 
 async function rpc(url: string, method: string, params: any[]) {
@@ -85,7 +92,8 @@ function decodeString(hex: string): string {
   } catch { return ''; }
 }
 
-async function fetchTokenInfoOnChain(rpcUrl: string, contractAddress: string): Promise<{ symbol: string; name: string }> {
+async function fetchTokenInfoOnChain(rpcUrl: string | null, contractAddress: string): Promise<{ symbol: string; name: string }> {
+  if (!rpcUrl) return { symbol: '?', name: 'Unknown' };
   try {
     const [symRes, nameRes] = await Promise.all([
       fetch(rpcUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -134,40 +142,64 @@ export async function GET(request: NextRequest) {
   }
 
   const apiKey = process.env.ALCHEMY_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json({ error: 'ALCHEMY_API_KEY not set', assets: [] }, { status: 500 });
-  }
-
-  const rpcBase = ALCHEMY_RPC[chainId];
-  if (!rpcBase) {
+  const hasAlchemy = !!apiKey;
+  const rpcBase = hasAlchemy ? ALCHEMY_RPC[chainId] : null;
+  if (!hasAlchemy) {
+    console.warn(`⚠️  ALCHEMY_API_KEY not set — using public RPC fallback for native balance on chain ${chainId}`);
+  } else if (!rpcBase) {
     return NextResponse.json({ error: 'Unsupported chain', assets: [] }, { status: 400 });
   }
 
-  const rpcUrl = `${rpcBase}/${apiKey}`;
+  const rpcUrl = hasAlchemy ? `${rpcBase}/${apiKey}` : null;
   const llamaChain = LLAMA_CHAIN[chainId];
   const native = NATIVE[chainId];
 
   try {
-    // 1. Native balance + all ERC-20 balances (we filter spam ourselves below)
-    const [nativeHex, tokenRes] = await Promise.all([
-      rpc(rpcUrl, 'eth_getBalance', [address, 'latest']),
-      rpc(rpcUrl, 'alchemy_getTokenBalances', [address, 'erc20']),
-    ]);
+    // 1. Fetch native balance (via Alchemy if available, otherwise public RPC fallback)
+    //    and ERC-20 balances (Alchemy only) independently.
+    //    If one fails, we still return whatever we got.
+
+    let nativeHex: string | null = null;
+    if (rpcUrl) {
+      const nativeResult = await Promise.allSettled([rpc(rpcUrl, 'eth_getBalance', [address, 'latest'])]);
+      if (nativeResult[0].status === 'fulfilled') {
+        nativeHex = nativeResult[0].value;
+      }
+    }
+
+    // Fallback RPC for native balance (when Alchemy unavailable or failed)
+    if (nativeHex === null) {
+      const fallbackRpc = RPC_FALLBACK[chainId];
+      if (fallbackRpc) {
+        try {
+          nativeHex = await rpc(fallbackRpc, 'eth_getBalance', [address, 'latest']);
+          console.log(`✅ Native balance fetched via fallback RPC for chain ${chainId}`);
+        } catch (fbErr) {
+          console.error(`Fallback RPC also failed for chain ${chainId}:`, fbErr);
+        }
+      }
+    }
 
     const nativeWei = BigInt(nativeHex || '0x0');
     const nativeBalance = Number(nativeWei) / 1e18;
 
-    // Filter tokens with non-zero balance
-    const nonZeroTokens: { contractAddress: string; tokenBalance: string }[] =
-      (tokenRes?.tokenBalances || []).filter(
-        (t: any) => t.tokenBalance && t.tokenBalance !== '0x0000000000000000000000000000000000000000000000000000000000000000'
-      );
+    // ERC-20 balances — only possible with Alchemy
+    const nonZeroTokens: { contractAddress: string; tokenBalance: string }[] = [];
+    if (rpcUrl) {
+      const tokenResult = await Promise.allSettled([rpc(rpcUrl, 'alchemy_getTokenBalances', [address, 'erc20'])]);
+      if (tokenResult[0].status === 'fulfilled') {
+        const tokenBalances = tokenResult[0].value?.tokenBalances || [];
+        nonZeroTokens.push(...tokenBalances.filter(
+          (t: any) => t.tokenBalance && t.tokenBalance !== '0x0000000000000000000000000000000000000000000000000000000000000000'
+        ));
+      }
+    }
 
     // 2. Batch fetch metadata for all tokens
     let metadataMap: Record<string, any> = {};
-    if (nonZeroTokens.length > 0) {
+    if (nonZeroTokens.length > 0 && rpcUrl) {
       const metaResults = await Promise.allSettled(
-        nonZeroTokens.map(t => rpc(rpcUrl, 'alchemy_getTokenMetadata', [t.contractAddress]))
+        nonZeroTokens.map(t => rpc(rpcUrl!, 'alchemy_getTokenMetadata', [t.contractAddress]))
       );
       nonZeroTokens.forEach((t, i) => {
         const r = metaResults[i];
@@ -305,7 +337,8 @@ export async function GET(request: NextRequest) {
       return parseFloat(b.balanceUsd) - parseFloat(a.balanceUsd);
     });
 
-    return NextResponse.json({ assets });
+    const warning = !hasAlchemy ? 'Token balances require ALCHEMY_API_KEY' : undefined;
+    return NextResponse.json({ assets, warning: warning });
   } catch (error: any) {
     console.error(`Alchemy assets error [chainId=${chainId}]:`, error?.message);
     return NextResponse.json({ error: error?.message || 'Internal error', assets: [] }, { status: 500 });

@@ -24,6 +24,7 @@ interface SelectedOrder {
   user: {
     id: string;
     walletAddress: string;
+    smartWalletAddress?: string | null;
     upiId: string | null;
     bankDetails: any;
   };
@@ -794,10 +795,10 @@ export default function AdminRight() {
                   <div className="flex items-center space-x-3">
                     <User className="w-5 h-5 text-white" />
                     <span className="text-white text-sm font-montserrat">
-                      {selectedOrder.user.walletAddress.slice(0, 6)}...{selectedOrder.user.walletAddress.slice(-4)}
+                      {(() => { const addr = selectedOrder.user.smartWalletAddress ?? selectedOrder.user.walletAddress; return `${addr.slice(0, 6)}...${addr.slice(-4)}`; })()}
                     </span>
                     <button
-                      onClick={() => handleCopy(selectedOrder.user.walletAddress, 'wallet')}
+                      onClick={() => handleCopy(selectedOrder.user.smartWalletAddress ?? selectedOrder.user.walletAddress, 'wallet')}
                       className="text-gray-400 hover:text-white transition-colors"
                     >
                       {copiedField === 'wallet' ? (

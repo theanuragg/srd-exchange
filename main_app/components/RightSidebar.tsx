@@ -17,7 +17,7 @@ import {
 import { FC, useState, useEffect } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import Image from 'next/image'
-import { useDisconnect, useSwitchChain, useWallets, useSmartAccount, useAccount } from '@particle-network/connectkit'
+import { useDisconnect, useSwitchChain, useWallets, useSmartAccount, useAccount, useAddress } from '@particle-network/connectkit'
 import { particleAuth } from '@particle-network/auth-core'
 import { parseUnits, erc20Abi } from 'viem'
 import { ethers } from 'ethers'
@@ -59,7 +59,7 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose, eoaAddress, sola
     // Receive/Send mode toggles
     const [receiveMode, setReceiveMode] = useState<'EVM' | 'SOL'>('EVM')
     const [sendMode, setSendMode] = useState<'EVM' | 'SOL'>('EVM')
-const [selectedAsset, setSelectedAsset] = useState<TokenAsset | null>(null)
+    const [selectedAsset, setSelectedAsset] = useState<TokenAsset | null>(null)
     const [showAssetDropdown, setShowAssetDropdown] = useState(false)
     const [selectedSolanaAsset, setSelectedSolanaAsset] = useState<TokenAsset | null>(null)
     const [showSolanaAssetDropdown, setShowSolanaAssetDropdown] = useState(false)
@@ -75,22 +75,36 @@ const [selectedAsset, setSelectedAsset] = useState<TokenAsset | null>(null)
 
     const { isConnected } = useAccount()
 
-    // Resolve smart wallet address from Particle smart account
-    const [smartWalletAddress, setSmartWalletAddress] = useState<string | null>(null)
+    // Smart wallet address: useAddress() (sync) + async getAccount() fallback
+    // This mirrors useWalletManager.ts's three-level fallback pattern:
+    //   resolvedSmartWalletAddress ?? smartAddress ?? eoaAddress
+    const smartFromAddress = useAddress()
+    const [smartFromAccount, setSmartFromAccount] = useState<string | null>(null)
     useEffect(() => {
-        if (!smartAccount || !isConnected || !eoaAddress) return
+        if (!smartAccount || !isConnected || !eoaAddress) {
+            setSmartFromAccount(null)
+            return
+        }
         smartAccount.getAccount().then(acc => {
-            if (acc?.smartAccountAddress) setSmartWalletAddress(acc.smartAccountAddress)
+            if (acc?.smartAccountAddress) setSmartFromAccount(acc.smartAccountAddress)
         }).catch(() => {})
-    }, [smartAccount, isConnected, eoaAddress])
+    }, [smartAccount, isConnected, eoaAddress, selectedChainId])
+    const smartWalletAddress = smartFromAddress ?? smartFromAccount ?? null
 
-    // Show smart wallet address when available (for EVM), EOA as fallback, Solana for Solana chain
-    const displayAddress = selectedChainId === 101 ? solanaAddress : (smartWalletAddress)
+    // Show the right address per chain:
+    // - Solana → solanaAddress
+    // - BSC → smartWalletAddress (where sponsored txns/trading happens)
+    // - Other EVM → eoaAddress (smart wallet not deployed/funded there)
+    const displayAddress = selectedChainId === 101 ? solanaAddress : (
+        selectedChainId === 56 ? smartWalletAddress : eoaAddress
+    )
 
-    // Fetch balances for smart wallet (where trading happens) — the user only sees this one balance
-    const tradingAddress = smartWalletAddress ?? eoaAddress
+    // Use smart wallet on BSC (trading/sponsored txns), EOA on other EVM chains
+    const tradingAddress = selectedChainId === 56
+        ? (smartWalletAddress ?? eoaAddress)
+        : eoaAddress
     const selectedChain = CHAIN_CONFIGS.find(c => c.id === selectedChainId) ?? CHAIN_CONFIGS[1]
-    const { assets, totalUsd, isLoading: assetsLoading, refetch: refetchAssets } = useChainAssets(
+    const { assets, totalUsd, isLoading: assetsLoading, error: assetsError, refetch: refetchAssets } = useChainAssets(
         selectedChainId === 101 ? null : tradingAddress,
         selectedChainId,
         solanaAddress
@@ -363,31 +377,31 @@ const [selectedAsset, setSelectedAsset] = useState<TokenAsset | null>(null)
                                                 <button
                                                     key={chain.id}
                                                     onClick={async () => {
-    setShowChainDropdown(false);
-    setSelectedAsset(null);
-    setSelectedSolanaAsset(null);
-    setSendAmount('');
-    setRecipientAddress('');
-    if (chain.id === 101) {
-        // Solana — no EVM chain switch needed
-        setSendMode('SOL');
-        setReceiveMode('SOL');
-        setSelectedChainId(101);
-    } else {
-        setSendMode('EVM');
-        setReceiveMode('EVM');
-        setSelectedChainId(chain.id);
-        // Actually switch Particle's active chain so smartAccount uses the right bundler
-        try {
-            setIsSwitchingChain(true);
-            await switchChainAsync({ chainId: chain.id });
-        } catch (e) {
-            console.warn('Chain switch failed:', e);
-        } finally {
-            setIsSwitchingChain(false);
-        }
-    }
-}}
+                                                        setShowChainDropdown(false);
+                                                        setSelectedAsset(null);
+                                                        setSelectedSolanaAsset(null);
+                                                        setSendAmount('');
+                                                        setRecipientAddress('');
+                                                        if (chain.id === 101) {
+                                                            // Solana — no EVM chain switch needed
+                                                            setSendMode('SOL');
+                                                            setReceiveMode('SOL');
+                                                            setSelectedChainId(101);
+                                                        } else {
+                                                            setSendMode('EVM');
+                                                            setReceiveMode('EVM');
+                                                            setSelectedChainId(chain.id);
+                                                            // Actually switch Particle's active chain so smartAccount uses the right bundler
+                                                            try {
+                                                                setIsSwitchingChain(true);
+                                                                await switchChainAsync({ chainId: chain.id });
+                                                            } catch (e) {
+                                                                console.warn('Chain switch failed:', e);
+                                                            } finally {
+                                                                setIsSwitchingChain(false);
+                                                            }
+                                                        }
+                                                    }}
                                                     disabled={chain.id === 101 && !solanaAddress}
                                                     className={`w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 transition-colors text-left
                                                         ${selectedChainId === chain.id ? 'bg-white/10' : ''}
@@ -442,16 +456,6 @@ const [selectedAsset, setSelectedAsset] = useState<TokenAsset | null>(null)
                                             exit={{ opacity: 0, y: -6, scale: 0.97 }}
                                             className="absolute top-full mt-1 right-0 w-56 bg-[#111] border border-white/10 rounded-xl overflow-hidden z-50 shadow-xl"
                                         >
-                                            <div className="px-3 py-2.5 border-b border-white/10 space-y-1.5">
-                                                {smartWalletAddress && (
-                                                    <div className="flex items-center justify-between gap-2">
-                                                        <button onClick={() => copyToClipboard(smartWalletAddress)} className="text-[11px] text-white/70 hover:text-white font-mono truncate">
-                                                            {formatAddress(smartWalletAddress)}
-                                                        </button>
-                                                    </div>
-                                                )}
-
-                                            </div>
                                             <button
                                                 onClick={handleLogout}
                                                 className="w-full flex items-center gap-2.5 px-3 py-2.5 text-red-400 hover:bg-red-500/10 transition-colors text-sm font-medium"
@@ -485,92 +489,92 @@ const [selectedAsset, setSelectedAsset] = useState<TokenAsset | null>(null)
     const renderReceiveView = () => {
         const receiveAddr = receiveMode === 'SOL' ? solanaAddress : displayAddress
         return (
-        <div className="flex-1 overflow-y-auto [&::-webkit-
+            <div className="flex-1 overflow-y-auto [&::-webkit-
         bar]:hidden animate-in fade-in slide-in-from-right-4 duration-300">
-            <div className="min-h-full flex flex-col items-center justify-center gap-6 px-6 pt-10 pb-28">
+                <div className="min-h-full flex flex-col items-center justify-center gap-6 px-6 pt-10 pb-28">
 
-                {/* EVM / Solana toggle */}
-                <div className="w-full flex items-center justify-between">
-                    <div className="flex bg-white/5 border border-white/10 rounded-xl p-1 gap-1">
-                        {(['EVM', 'SOL'] as const).map(mode => (
-                            <button
-                                key={mode}
-                                onClick={() => {
-                                    setReceiveMode(mode);
-                                    if (mode === 'EVM' && selectedChainId === 101) setSelectedChainId(56);
-                                    if (mode === 'SOL') setSelectedChainId(101);
-                                }}
-                                disabled={mode === 'SOL' && !solanaAddress}
-                                className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${receiveMode === mode ? 'bg-[#6320EE] text-white' : 'text-white/40 hover:text-white/70'} disabled:opacity-30 disabled:cursor-not-allowed`}
-                            >
-                                {mode === 'SOL' ? 'Solana' : 'EVM'}
-                            </button>
-                        ))}
-                    </div>
-
-                    {/* Stacked chain logos */}
-                    <div className="flex items-center">
-                        {CHAIN_CONFIGS.filter(c => receiveMode === 'SOL' ? c.id === 101 : c.id !== 101).map((chain, i, arr) => (
-                            <div
-                                key={chain.id}
-                                className="w-6 h-6 rounded-full border-2 border-black overflow-hidden bg-black shrink-0"
-                                style={{ marginLeft: i === 0 ? 0 : '-8px', zIndex: arr.length - i }}
-                                title={chain.name}
-                            >
-                                <img
-                                    src={chain.logo}
-                                    alt={chain.name}
-                                    className="w-full h-full object-cover"
-                                    onError={(e) => {
-                                        const el = e.target as HTMLImageElement
-                                        el.style.display = 'none'
-                                        el.parentElement!.style.background = chain.color
+                    {/* EVM / Solana toggle */}
+                    <div className="w-full flex items-center justify-between">
+                        <div className="flex bg-white/5 border border-white/10 rounded-xl p-1 gap-1">
+                            {(['EVM', 'SOL'] as const).map(mode => (
+                                <button
+                                    key={mode}
+                                    onClick={() => {
+                                        setReceiveMode(mode);
+                                        if (mode === 'EVM' && selectedChainId === 101) setSelectedChainId(56);
+                                        if (mode === 'SOL') setSelectedChainId(101);
                                     }}
-                                />
-                            </div>
-                        ))}
-                    </div>
-                </div>
-
-                <p className="text-white/30 text-xs text-center -mt-2">
-                    {receiveMode === 'EVM' ? (
-                        <>All EVM-compatible <span className="text-yellow-400 font-medium">tokens</span> can be securely deposited into this address</>
-                    ) : (
-                        <>All Solana-compatible <span className="text-yellow-400 font-medium">tokens</span> can be securely deposited into this address</>
-                    )}
-                </p>
-
-                {/* QR Code */}
-                <div className="p-5 bg-white rounded-3xl shadow-2xl">
-                    <QRCodeSVG value={receiveAddr || ''} size={190} level="H" />
-                </div>
-
-                {/* Address Box */}
-                <div className="w-full space-y-2">
-                    <p className="text-gray-500 text-sm font-medium text-center">
-                        Your {receiveMode === 'SOL' ? 'Solana' : 'Wallet'} Address
-                    </p>
-                    <div
-                        onClick={() => copyToClipboard(receiveAddr || '')}
-                        className="w-full p-4 bg-white/5 border border-white/10 rounded-2xl flex items-center justify-between cursor-pointer hover:bg-white/10 transition-colors group"
-                    >
-                        <span className="text-white font-mono text-sm break-all flex-1 mr-4">
-                            {receiveAddr || (receiveMode === 'SOL' ? 'Solana address not available' : 'Wallet not connected')}
-                        </span>
-                        <div className="shrink-0">
-                            {copyStatus ? (
-                                <CheckCircle2 className="w-5 h-5 text-green-500" />
-                            ) : (
-                                <Copy className="w-5 h-5 text-gray-400 group-hover:text-white transition-colors" />
-                            )}
+                                    disabled={mode === 'SOL' && !solanaAddress}
+                                    className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${receiveMode === mode ? 'bg-[#6320EE] text-white' : 'text-white/40 hover:text-white/70'} disabled:opacity-30 disabled:cursor-not-allowed`}
+                                >
+                                    {mode === 'SOL' ? 'Solana' : 'EVM'}
+                                </button>
+                            ))}
                         </div>
+
+                        {/* Stacked chain logos */}
+                        <div className="flex items-center">
+                            {CHAIN_CONFIGS.filter(c => receiveMode === 'SOL' ? c.id === 101 : c.id !== 101).map((chain, i, arr) => (
+                                <div
+                                    key={chain.id}
+                                    className="w-6 h-6 rounded-full border-2 border-black overflow-hidden bg-black shrink-0"
+                                    style={{ marginLeft: i === 0 ? 0 : '-8px', zIndex: arr.length - i }}
+                                    title={chain.name}
+                                >
+                                    <img
+                                        src={chain.logo}
+                                        alt={chain.name}
+                                        className="w-full h-full object-cover"
+                                        onError={(e) => {
+                                            const el = e.target as HTMLImageElement
+                                            el.style.display = 'none'
+                                            el.parentElement!.style.background = chain.color
+                                        }}
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <p className="text-white/30 text-xs text-center -mt-2">
+                        {receiveMode === 'EVM' ? (
+                            <>All EVM-compatible <span className="text-yellow-400 font-medium">tokens</span> can be securely deposited into this address</>
+                        ) : (
+                            <>All Solana-compatible <span className="text-yellow-400 font-medium">tokens</span> can be securely deposited into this address</>
+                        )}
+                    </p>
+
+                    {/* QR Code */}
+                    <div className="p-5 bg-white rounded-3xl shadow-2xl">
+                        <QRCodeSVG value={receiveAddr || ''} size={190} level="H" />
+                    </div>
+
+                    {/* Address Box */}
+                    <div className="w-full space-y-2">
+                        <p className="text-gray-500 text-sm font-medium text-center">
+                            Your {receiveMode === 'SOL' ? 'Solana' : 'Wallet'} Address
+                        </p>
+                        <div
+                            onClick={() => copyToClipboard(receiveAddr || '')}
+                            className="w-full p-4 bg-white/5 border border-white/10 rounded-2xl flex items-center justify-between cursor-pointer hover:bg-white/10 transition-colors group"
+                        >
+                            <span className="text-white font-mono text-sm break-all flex-1 mr-4">
+                                {receiveAddr || (receiveMode === 'SOL' ? 'Solana address not available' : 'Wallet not connected')}
+                            </span>
+                            <div className="shrink-0">
+                                {copyStatus ? (
+                                    <CheckCircle2 className="w-5 h-5 text-green-500" />
+                                ) : (
+                                    <Copy className="w-5 h-5 text-gray-400 group-hover:text-white transition-colors" />
+                                )}
+                            </div>
+                        </div>
+
                     </div>
 
                 </div>
 
             </div>
-
-        </div>
         )
     }
 
@@ -584,18 +588,18 @@ const [selectedAsset, setSelectedAsset] = useState<TokenAsset | null>(null)
                         <button
                             key={mode}
                             onClick={() => {
-    setSendMode(mode);
-    setSendError(null);
-    setTxHash(null);
-    setSendAmount('');
-    setRecipientAddress('');
-    setSelectedAsset(null);
-    setSelectedSolanaAsset(null);
-    // Sync header chain: if switching to EVM while Solana is selected, reset to BNB
-    if (mode === 'EVM' && selectedChainId === 101) setSelectedChainId(56);
-    // If switching to SOL while an EVM chain is selected, set to Solana
-    if (mode === 'SOL') setSelectedChainId(101);
-}}
+                                setSendMode(mode);
+                                setSendError(null);
+                                setTxHash(null);
+                                setSendAmount('');
+                                setRecipientAddress('');
+                                setSelectedAsset(null);
+                                setSelectedSolanaAsset(null);
+                                // Sync header chain: if switching to EVM while Solana is selected, reset to BNB
+                                if (mode === 'EVM' && selectedChainId === 101) setSelectedChainId(56);
+                                // If switching to SOL while an EVM chain is selected, set to Solana
+                                if (mode === 'SOL') setSelectedChainId(101);
+                            }}
                             disabled={mode === 'SOL' && !solanaAddress}
                             className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${sendMode === mode ? 'bg-[#6320EE] text-white' : 'text-white/40 hover:text-white/70'} disabled:opacity-30 disabled:cursor-not-allowed`}
                         >
@@ -919,11 +923,10 @@ const [selectedAsset, setSelectedAsset] = useState<TokenAsset | null>(null)
                             (sendMode === 'EVM' && !selectedAsset) ||
                             (sendMode === 'SOL' && !selectedSolanaAsset)
                         }
-                        className={`w-full disabled:opacity-50 disabled:cursor-not-allowed text-white py-4 rounded-2xl font-bold text-lg flex items-center justify-center gap-3 transition-all active:scale-[0.98] ${
-                            sendMode === 'SOL'
-                                ? 'bg-[#9945FF] hover:bg-[#7c35cc] shadow-[0_8px_30px_rgba(153,69,255,0.3)]'
-                                : 'bg-[#6320EE] hover:bg-[#5219d1] shadow-[0_8px_30px_rgb(99,32,238,0.3)]'
-                        }`}
+                        className={`w-full disabled:opacity-50 disabled:cursor-not-allowed text-white py-4 rounded-2xl font-bold text-lg flex items-center justify-center gap-3 transition-all active:scale-[0.98] ${sendMode === 'SOL'
+                            ? 'bg-[#9945FF] hover:bg-[#7c35cc] shadow-[0_8px_30px_rgba(153,69,255,0.3)]'
+                            : 'bg-[#6320EE] hover:bg-[#5219d1] shadow-[0_8px_30px_rgb(99,32,238,0.3)]'
+                            }`}
                     >
                         {isSending ? (
                             <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -1058,7 +1061,13 @@ const [selectedAsset, setSelectedAsset] = useState<TokenAsset | null>(null)
                                                     <div className="w-5 h-5 border-2 border-[#622DBF] border-t-transparent rounded-full animate-spin" />
                                                 </div>
                                             )}
-                                            {!assetsLoading && assets.length === 0 && (
+                                            {assetsError && (
+                                                <div className="flex items-center gap-2 py-3 px-3 bg-red-500/10 border border-red-500/20 rounded-xl mb-2">
+                                                    <Info className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                                                    <span className="text-red-400 text-xs">Failed to load assets. Balances may be incomplete.</span>
+                                                </div>
+                                            )}
+                                            {!assetsLoading && !assetsError && assets.length === 0 && (
                                                 <div className="text-center py-6 text-white/30 text-sm">
                                                     No assets on {selectedChain.name}
                                                 </div>
@@ -1106,7 +1115,7 @@ const [selectedAsset, setSelectedAsset] = useState<TokenAsset | null>(null)
                                         </div>
                                     </div>
 
-                                    </div>
+                                </div>
                             </div>
                         ) : currentView === 'Receive' ? (
                             renderReceiveView()

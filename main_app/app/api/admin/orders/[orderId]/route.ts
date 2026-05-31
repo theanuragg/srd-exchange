@@ -74,6 +74,7 @@ export async function PATCH(
                     select: {
                         id: true,
                         walletAddress: true,
+                        smartWalletAddress: true,
                         upiId: true,
                         bankDetails: true
                     }

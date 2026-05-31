@@ -666,7 +666,7 @@ export default function QR() {
             <div className="border-y border-white/10 bg-[#111113] px-4 py-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <Image src="./image.png" alt="SRD Exchange" width={34} height={34} className="h-[34px] w-[34px] rounded-full object-cover" />
+                  <Image src="/srd.jpg" alt="SRD Exchange" width={34} height={34} className="h-[34px] w-[34px] rounded-full object-cover" />
                   <h2 id="scan-pay-title" className="text-[1.08rem] font-medium tracking-[-0.02em] text-white/95">
                     {screen === "success" ? "SRD.Exchange" : "Scan & Pay"}
                   </h2>

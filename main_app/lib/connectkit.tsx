@@ -14,8 +14,6 @@ import {
   optimism,
   polygon,
   avalanche,
-  scroll,
-  cronos,
   solana,
 } from '@particle-network/connectkit/chains';
 import { wallet, EntryPosition } from '@particle-network/connectkit/wallet';
@@ -80,8 +78,6 @@ function buildConfig(env: ParticleEnv): ParticleConfig {
       optimism,
       polygon,
       avalanche,
-      scroll,
-      cronos,
       solana,
     ],
     appearance: {
