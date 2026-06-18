@@ -13,6 +13,7 @@ export default function SimpleNav() {
   const {
     address,
     walletData,
+    isSmartAccountReady,
   } = useWalletManager();
 
   return (
@@ -56,21 +57,31 @@ export default function SimpleNav() {
           {/* User Section - Clickable to open Sidebar */}
           <button
             onClick={openSidebar}
-            className="flex items-center space-x-3 px-3 py-1.5 border border-[#622DBF] rounded-lg bg-[#622DBF]/5 hover:bg-[#622DBF]/15 transition-all group"
+            className="flex items-center gap-3 px-3 py-1.5 border border-[#622DBF] rounded-lg bg-[#622DBF]/5 hover:bg-[#622DBF]/15 transition-all group"
           >
-            <div className="flex items-center space-x-2">
-              <Image
-                src="/wallett.svg"
-                alt="Wallet"
-                width={20}
-                height={20}
-                className="w-5 h-5"
-              />
+            <Image
+              src="/wallett.svg"
+              alt="Wallet"
+              width={20}
+              height={20}
+              className="w-5 h-5 shrink-0"
+            />
+            {address && isSmartAccountReady ? (
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono text-white/80">
+                  {`${address.slice(0, 6)}...${address.slice(-4)}`}
+                </span>
+                {walletData?.balances?.usdt?.formatted && (
+                  <span className="text-xs font-medium text-[#622DBF] bg-[#622DBF]/10 px-1.5 py-0.5 rounded">
+                    {parseFloat(walletData.balances.usdt.formatted).toFixed(2)} USDT
+                  </span>
+                )}
+              </div>
+            ) : (
               <span className="text-sm font-medium text-[#622DBF]">
                 Wallet
               </span>
-            </div>
-            
+            )}
           </button>
         </div>
       </div>

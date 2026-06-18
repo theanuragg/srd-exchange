@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useAccount } from '@particle-network/connectkit';
+import { useIsSignedIn } from '@coinbase/cdp-hooks';
+import { useWalletManager } from '@/hooks/useWalletManager';
 
 interface Order {
   id: string;
@@ -23,10 +24,11 @@ interface Order {
 export const useUserOrders = () => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const { address, isConnected } = useAccount();
+  const { isSignedIn } = useIsSignedIn();
+  const { eoaAddress: address } = useWalletManager();
 
   const fetchOrders = async () => {
-    if (!isConnected || !address) {
+    if (!isSignedIn || !address) {
       setOrders([]);
       setIsLoading(false);
       return;
@@ -48,7 +50,7 @@ export const useUserOrders = () => {
 
   useEffect(() => {
     fetchOrders();
-  }, [address, isConnected]);
+  }, [address, isSignedIn]);
 
   return {
     orders,

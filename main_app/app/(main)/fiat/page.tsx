@@ -2,7 +2,7 @@
 
 import SimpleNav from '@/components/simple-nav';
 import AuthGuard from '@/components/auth/AuthGuard';
-import { useDisconnect } from '@particle-network/connectkit';
+import { useSignOut } from '@coinbase/cdp-hooks';
 import { useRouter } from 'next/navigation';
 import { LogOut } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -31,13 +31,13 @@ const Orders = dynamic(() => import('@/components/orders'), {
 });
 
 export default function Dashboard() {
-    const { disconnect } = useDisconnect();
+    const { signOut } = useSignOut();
     const router = useRouter();
 
     const handleLogout = async () => {
         try {
             // Disconnect wallet
-            disconnect();
+            signOut();
             
             // Clear any cached user data
             if (typeof window !== 'undefined') {

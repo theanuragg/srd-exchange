@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useAccount, useDisconnect, useModal as useParticleModal } from '@particle-network/connectkit'
+import { useIsSignedIn, useSignOut } from '@coinbase/cdp-hooks'
 import { X, ChevronRight, CheckCircle2, Wallet, RefreshCw, Copy, ExternalLink, TrendingUp, TrendingDown, Check } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useWalletManager } from '@/hooks/useWalletManager'
@@ -46,10 +46,9 @@ export default function WalletConnectModal({
   onClose,
   onSuccess
 }: WalletConnectModalProps) {
-  const { isConnected, address } = useAccount()
-  const { disconnect } = useDisconnect()
-  const { setOpen: openParticleModal } = useParticleModal()
-  const { walletData, fetchWalletData, isOnBSC, switchToBSC } = useWalletManager()
+  const { isSignedIn } = useIsSignedIn()
+  const { signOut } = useSignOut()
+  const { address, walletData, fetchWalletData, isOnBSC, switchToBSC } = useWalletManager()
   const router = useRouter()
 
   const [selectedConnector, setSelectedConnector] = useState<string | null>(null)
@@ -57,10 +56,10 @@ export default function WalletConnectModal({
   const [acceptedTerms, setAcceptedTerms] = useState(false)
 
   useEffect(() => {
-    if (isConnected && address) {
+    if (isSignedIn && address) {
       handleWalletConnected()
     }
-  }, [isConnected, address])
+  }, [isSignedIn, address])
 
   const handleWalletConnected = async () => {
     if (!address) return
@@ -128,7 +127,7 @@ export default function WalletConnectModal({
       if (onSuccess) onSuccess()
     } catch (error) {
       console.error('Authentication failed:', error)
-      disconnect()
+      signOut()
       setAuthStep('connect')
     }
   }
@@ -140,9 +139,6 @@ export default function WalletConnectModal({
     }
 
     if (wallet?.id) setSelectedConnector(wallet.id)
-
-    // Open Particle Network's connect modal
-    openParticleModal(true)
   }
 
   // Loading states
@@ -384,7 +380,8 @@ export function WalletDashboard() {
     isLoading,
     fetchWalletData,
     refetchBalances,
-    canTrade
+    canTrade,
+    isSmartAccountReady,
   } = useWalletManager()
   const [copied, setCopied] = useState(false)
 
@@ -401,6 +398,40 @@ export function WalletDashboard() {
   }
 
   if (!address) return null
+
+  if (!isSmartAccountReady) {
+    return (
+      <motion.div
+        className="bg-[#111010] border border-[#3E3E3E] rounded-xl p-6 max-w-2xl w-full"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+      >
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 bg-[#622DBF]/20 rounded-full flex items-center justify-center">
+              <Wallet className="w-5 h-5 text-[#622DBF]" />
+            </div>
+            <div>
+              <h3 className="text-white font-bold text-lg font-montserrat">
+                Connected Wallet
+              </h3>
+            </div>
+          </div>
+        </div>
+        <div className="animate-pulse space-y-4">
+          <div className="h-12 bg-[#1A1A1A] rounded-lg" />
+          <div className="grid grid-cols-2 gap-4">
+            <div className="h-24 bg-[#1A1A1A] rounded-lg" />
+            <div className="h-24 bg-[#1A1A1A] rounded-lg" />
+          </div>
+          <div className="h-20 bg-[#1A1A1A] rounded-lg" />
+        </div>
+        <p className="text-gray-500 text-sm text-center mt-4 font-montserrat">
+          Loading smart wallet address...
+        </p>
+      </motion.div>
+    )
+  }
 
   return (
     <motion.div

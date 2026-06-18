@@ -1,6 +1,7 @@
 'use client'
 import { FC, useState } from 'react'
-import { useAccount } from '@particle-network/connectkit'
+import { useIsSignedIn } from '@coinbase/cdp-hooks'
+import { useWalletManager } from '@/hooks/useWalletManager'
 import WalletConnect from './WalletConnect'
 
 interface Props {
@@ -8,7 +9,8 @@ interface Props {
 }
 
 const SignInModal: FC<Props> = ({ onClose }) => {
-  const { address, isConnected } = useAccount()
+  const { isSignedIn } = useIsSignedIn()
+  const { address } = useWalletManager()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -54,7 +56,7 @@ const SignInModal: FC<Props> = ({ onClose }) => {
 
         <WalletConnect />
 
-        {isConnected && (
+        {isSignedIn && (
           <button
             onClick={handleContinue}
             disabled={loading}

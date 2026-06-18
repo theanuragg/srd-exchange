@@ -1,18 +1,20 @@
 'use client'
-import { useAccount, useDisconnect, useModal, ConnectButton } from '@particle-network/connectkit'
+import { useIsSignedIn, useSignOut } from '@coinbase/cdp-hooks'
+import { AuthButton } from '@coinbase/cdp-react'
+import { useWalletManager } from '@/hooks/useWalletManager'
 
 export default function WalletConnect() {
-  const { disconnect } = useDisconnect()
-  const { address, isConnected } = useAccount()
-  const { setOpen } = useModal()
+  const { isSignedIn } = useIsSignedIn()
+  const { signOut } = useSignOut()
+  const { address } = useWalletManager()
 
-  if (isConnected) {
+  if (isSignedIn) {
     return (
       <div className="bg-green-100 p-4 rounded-lg">
         <p className="text-green-800 font-medium">Connected</p>
         <p className="text-sm text-gray-600">{address}</p>
         <button 
-          onClick={() => disconnect()}
+          onClick={() => signOut()}
           className="mt-3 bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
         >
           Disconnect
@@ -24,7 +26,7 @@ export default function WalletConnect() {
   return (
     <div className="space-y-3">
       <h3 className="font-medium">Connect Your Wallet</h3>
-      <ConnectButton />
+      <AuthButton />
     </div>
   )
 }

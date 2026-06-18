@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { useAccount } from "@particle-network/connectkit";
-import { particleAuth } from "@particle-network/auth-core";
+import { useIsSignedIn, useIsInitialized } from '@coinbase/cdp-hooks';
+import { useWalletManager } from '@/hooks/useWalletManager';
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronDown,
@@ -28,7 +28,9 @@ interface BankDetails {
 
 export default function CompleteProfilePage() {
   const router = useRouter();
-  const { address, isConnected } = useAccount();
+  const { isSignedIn } = useIsSignedIn();
+  const { address } = useWalletManager();
+  const { isInitialized } = useIsInitialized();
 
   const [upiId, setUpiId] = useState("");
   const [showBankDetails, setShowBankDetails] = useState(false);
@@ -40,7 +42,6 @@ export default function CompleteProfilePage() {
     accountHolderName: "",
   });
 
-  const [solanaAddress, setSolanaAddress] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -105,33 +106,12 @@ export default function CompleteProfilePage() {
     return accountNumber && confirmAccountNumber && ifscCode && branchName && accountHolderName;
   };
 
-  // Redirect if not connected
+  // Redirect if not connected (wait for CDP to initialize first)
   useEffect(() => {
-    if (!isConnected || !address) {
+    if (isInitialized && (!isSignedIn || !address)) {
       router.push("/");
     }
-  }, [isConnected, address, router]);
-
-  // Silently generate and fetch Solana address
-  useEffect(() => {
-    if (!isConnected) return;
-
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('timeout')), 10000)
-    );
-
-    Promise.race([particleAuth.solana.connect(), timeout])
-      .then(async () => {
-        try {
-          const pubKey = await particleAuth.solana.publicKey();
-          if (pubKey) setSolanaAddress(pubKey.toBase58());
-        } catch {
-          const addr = particleAuth.solana.selectedAddress;
-          if (addr) setSolanaAddress(addr);
-        }
-      })
-      .catch(() => setSolanaAddress(null));
-  }, [isConnected]);
+  }, [isInitialized, isSignedIn, address, router]);
 
   const handleBankDetailsChange = (field: keyof BankDetails, value: string) => {
     setBankDetails(prev => ({
@@ -201,7 +181,7 @@ export default function CompleteProfilePage() {
         const regRes = await fetch("/api/auth/register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ walletAddress: address, solanaAddress }),
+          body: JSON.stringify({ walletAddress: address }),
         });
         if (regRes.ok) {
           // Retry profile completion

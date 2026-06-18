@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { prisma, withDatabaseRetry } from "@/lib/prisma";
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if user exists (by walletAddress OR smartWalletAddress)
-    const existingUser = await prisma.user.findFirst({
+    const existingUser = await withDatabaseRetry(() => prisma.user.findFirst({
       where: {
         OR: [
           { walletAddress: walletAddress.toLowerCase() },
@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
         ]
       },
       include: { bankDetails: true }
-    });
+    }));
 
     if (!existingUser) {
       return NextResponse.json(
@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Update existing user - Profile is completed with just UPI ID
-    const user = await prisma.user.update({
+    const user = await withDatabaseRetry(() => prisma.user.update({
       where: { id: existingUser.id },
       data: {
         upiId: upiId.trim(),
@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
         lastLoginAt: new Date(),
       },
       include: { bankDetails: true }
-    });
+    }));
 
     console.log("User updated with profile completed:", user.profileCompleted);
 
@@ -56,13 +56,13 @@ export async function POST(request: NextRequest) {
       console.log("Saving bank details...");
 
       // Check if bank details already exist for this user
-      const existingBankDetails = await prisma.bankDetails.findUnique({
+      const existingBankDetails = await withDatabaseRetry(() => prisma.bankDetails.findUnique({
         where: { userId: user.id }
-      });
+      }));
 
       if (existingBankDetails) {
         // Update existing bank details
-        await prisma.bankDetails.update({
+        await withDatabaseRetry(() => prisma.bankDetails.update({
           where: { userId: user.id },
           data: {
             accountNumber: bankDetails.accountNumber,
@@ -70,10 +70,10 @@ export async function POST(request: NextRequest) {
             branchName: bankDetails.branchName,
             accountHolderName: bankDetails.accountHolderName,
           }
-        });
+        }));
       } else {
         // Create new bank details
-        await prisma.bankDetails.create({
+        await withDatabaseRetry(() => prisma.bankDetails.create({
           data: {
             userId: user.id,
             accountNumber: bankDetails.accountNumber,
@@ -81,15 +81,15 @@ export async function POST(request: NextRequest) {
             branchName: bankDetails.branchName,
             accountHolderName: bankDetails.accountHolderName,
           }
-        });
+        }));
       }
     }
 
     // Fetch updated user with bank details to ensure we have latest data
-    const updatedUser = await prisma.user.findUnique({
+    const updatedUser = await withDatabaseRetry(() => prisma.user.findUnique({
       where: { id: user.id },
       include: { bankDetails: true }
-    });
+    }));
 
     console.log("Final user state:", {
       id: updatedUser?.id,

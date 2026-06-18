@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { fetchChainAssets, fetchSolanaAssets, type TokenAsset } from '@/lib/ankrApi';
+import { fetchChainAssets, type TokenAsset } from '@/lib/ankrApi';
 
 interface UseChainAssetsResult {
   assets: TokenAsset[];
@@ -11,18 +11,14 @@ interface UseChainAssetsResult {
 
 export function useChainAssets(
   address: string | null | undefined,
-  chainId: number,
-  solanaAddress?: string | null
+  chainId: number
 ): UseChainAssetsResult {
   const [assets, setAssets] = useState<TokenAsset[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetch = useCallback(async () => {
-    const isSolana = chainId === 101;
-    const walletAddr = isSolana ? solanaAddress : address;
-
-    if (!walletAddr) {
+    if (!address) {
       setAssets([]);
       return;
     }
@@ -31,9 +27,7 @@ export function useChainAssets(
     setError(null);
 
     try {
-      const result = isSolana
-        ? await fetchSolanaAssets(walletAddr)
-        : await fetchChainAssets(walletAddr, chainId);
+      const result = await fetchChainAssets(address, chainId);
       setAssets(result);
     } catch (err: any) {
       setError(err?.message || 'Failed to fetch assets');
@@ -41,7 +35,7 @@ export function useChainAssets(
     } finally {
       setIsLoading(false);
     }
-  }, [address, chainId, solanaAddress]);
+  }, [address, chainId]);
 
   useEffect(() => {
     fetch();

@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma'
 
 export async function POST(request: NextRequest) {
   try {
-    const { walletAddress, solanaAddress, role = 'USER' } = await request.json()
+    const { walletAddress, role = 'USER' } = await request.json()
 
     if (!walletAddress) {
       return NextResponse.json(
@@ -31,7 +31,6 @@ export async function POST(request: NextRequest) {
     const user = await prisma.user.create({
       data: {
         walletAddress: walletAddress.toLowerCase(),
-        solanaAddress: solanaAddress || null,
         role: role === 'ADMIN' ? 'ADMIN' : 'USER',
         profileCompleted: false,
         lastLoginAt: new Date(),

@@ -3,10 +3,10 @@
 import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Check, Delete, X, Loader2, RefreshCw, Clock3 } from "lucide-react";
-import { useAccount, useSmartAccount, useAddress } from "@particle-network/connectkit";
 import { fetchChainAssets, formatBalance, type TokenAsset } from "@/lib/ankrApi";
-import { parseAbi, parseUnits } from "viem";
+import { parseAbi, parseUnits, type Address } from "viem";
 import { useRates } from "@/hooks/useRates";
+import { useWalletManager } from "@/hooks/useWalletManager";
 import { sendSponsoredContractWriteDetailed } from "@/lib/sponsoredTransactions";
 import {
   QR_PAY_MAX_INR,
@@ -124,9 +124,7 @@ const QR_PERSONAL_ACCOUNT_WARNING_HI =
   "चेतावनी: यह QR पेमेंट केवल merchant या business payment के लिए है. Personal transfer के लिए इसका उपयोग न करें.";
 
 export default function QR() {
-  const { isConnected, address: eoaAddress } = useAccount();
-  const address = useAddress();
-  const smartAccount = useSmartAccount();
+  const { eoaAddress, smartWalletAddress: address, signHash } = useWalletManager();
   const { getSellRate } = useRates();
   const [isOpen, setIsOpen] = useState(false);
   const [amount, setAmount] = useState("0");
@@ -493,20 +491,21 @@ export default function QR() {
     }
   };
 
-  const sendSponsoredUsdt = async (): Promise<{ userOpHash: string; transactionHash: string }> => {
+  const sendSponsoredUsdt = async (): Promise<{ userOpHash: `0x${string}`; transactionHash: `0x${string}` }> => {
     if (!address) throw new Error("Wallet not connected");
-    if (!smartAccount) throw new Error("Smart account not connected");
+    if (!eoaAddress) throw new Error("EOA not connected");
 
     console.log("🏁 sendSponsoredUsdt starting", { address, usdtTransferAmount });
 
     return sendSponsoredContractWriteDetailed({
-      smartAccount,
+      smartAccountAddress: address as Address,
+      eoaAddress: eoaAddress as Address,
       chainId: BSC_CHAIN_ID,
       address: USDT_ADDRESS as `0x${string}`,
       abi: USDT_ABI,
       functionName: "transfer",
       args: [ADMIN_WALLET as `0x${string}`, parseUnits(usdtTransferAmount, 18)],
-    });
+    }, signHash);
   };
 
   const handleConfirmPay = async () => {

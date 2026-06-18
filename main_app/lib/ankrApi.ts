@@ -19,7 +19,6 @@ export const CHAIN_CONFIGS = [
   { id: 137,    name: 'Polygon',   symbol: 'POL',  abbr: 'POL',  explorer: 'https://polygonscan.com',         color: '#8247E5', logo: 'https://assets.coingecko.com/coins/images/4713/small/polygon.png' },
   { id: 43114,  name: 'Avalanche', symbol: 'AVAX', abbr: 'AVAX', explorer: 'https://snowtrace.io',            color: '#E84142', logo: 'https://assets.coingecko.com/coins/images/12559/small/Avalanche_Circle_RedWhite_Trans.png' },
 
-  { id: 101,    name: 'Solana',    symbol: 'SOL',  abbr: 'SOL',  explorer: 'https://solscan.io',              color: '#9945FF', logo: 'https://assets.coingecko.com/coins/images/4128/small/solana.png' },
 ];
 
 export interface TokenAsset {
@@ -44,18 +43,6 @@ export async function fetchChainAssets(
   if (!res.ok) {
     throw new Error(data?.error || `Failed to fetch assets (${res.status})`);
   }
-  return data.assets ?? [];
-}
-
-export async function fetchSolanaAssets(
-  solanaAddress: string
-): Promise<TokenAsset[]> {
-  const res = await fetch(`/api/wallet/solana-assets?address=${encodeURIComponent(solanaAddress)}`);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error || `Failed to fetch Solana assets (${res.status})`);
-  }
-  const data = await res.json();
   return data.assets ?? [];
 }
 

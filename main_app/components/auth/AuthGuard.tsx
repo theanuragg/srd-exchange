@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAccount } from '@particle-network/connectkit'
+import { useIsSignedIn, useIsInitialized } from '@coinbase/cdp-hooks'
+import { useWalletManager } from '@/hooks/useWalletManager'
 import { motion } from 'framer-motion'
 
 interface AuthGuardProps {
@@ -17,21 +18,27 @@ export default function AuthGuard({
   redirectTo = '/'
 }: AuthGuardProps) {
   const router = useRouter()
-  const { isConnected, address } = useAccount()
+  const { isSignedIn } = useIsSignedIn()
+  const { address } = useWalletManager()
   const [isVerifying, setIsVerifying] = useState(true)
   const [isAuthorized, setIsAuthorized] = useState(false)
+  const { isInitialized } = useIsInitialized()
 
   useEffect(() => {
     const verifyUser = async () => {
-      console.log("AuthGuard: Starting verification", { requireAuth, isConnected, address });
-      
+      console.log("AuthGuard: Starting verification", { requireAuth, isSignedIn: isSignedIn, address, isInitialized });
+
       if (!requireAuth) {
         setIsAuthorized(true)
         setIsVerifying(false)
         return
       }
 
-      if (!isConnected || !address) {
+      if (!isInitialized) {
+        return
+      }
+
+      if (!isSignedIn || !address) {
         console.log("AuthGuard: Not connected, redirecting to:", redirectTo);
         setIsAuthorized(false)
         setIsVerifying(false)
@@ -79,7 +86,7 @@ export default function AuthGuard({
     }
 
     verifyUser()
-  }, [isConnected, address, requireAuth, router, redirectTo])
+  }, [isSignedIn, address, requireAuth, router, redirectTo, isInitialized])
 
   if (isVerifying) {
     return (

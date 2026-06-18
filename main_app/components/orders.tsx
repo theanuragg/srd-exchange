@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useUserOrders } from "@/hooks/useUserOrders";
-import { useAccount } from '@particle-network/connectkit';
+import { useIsSignedIn } from '@coinbase/cdp-hooks';
 import BuyCDMModal from './modal/buy-cdm';
 import BuyUPIModal from './modal/buy-upi';
 import SellUPIModal from './modal/sell-upi';
@@ -17,7 +17,7 @@ export default function Orders() {
   const [showSellUPIModal, setShowSellUPIModal] = useState(false);
   const [showSellCDMModal, setShowSellCDMModal] = useState(false);
   
-  const { isConnected } = useAccount();
+  const { isSignedIn } = useIsSignedIn();
   
   // Get real user orders
   const { orders, isLoading } = useUserOrders();
@@ -148,7 +148,7 @@ export default function Orders() {
     }
   };
 
-  if (!isConnected) {
+  if (!isSignedIn) {
     return (
       <div className="bg-black max-w-4xl mx-auto text-white min-h-screen flex flex-col">
         <div className="flex-1 p-4 sm:p-6 text-center">
