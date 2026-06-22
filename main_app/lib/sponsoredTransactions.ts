@@ -1,7 +1,6 @@
 "use client";
 
 import { type Abi, type Address, type Hex } from "viem";
-import { getUserOperationHash } from "viem/account-abstraction";
 import {
   getSenderNonce,
   encodeSmartAccountExecuteCallData,
@@ -10,12 +9,7 @@ import {
   sponsorViaAlchemy,
   computeUserOpHash,
   submitToAlchemyBundler,
-  getCounterfactualAddress,
-  ENTRY_POINT_V06,
 } from "./userOpBuilder";
-import {
-  isRawEcdsaSignature,
-} from "./coinbaseSmartWalletSignature";
 
 export type SignHashFn = (params: {
   hash: Hex;
@@ -91,6 +85,7 @@ export async function sendSponsoredSmartAccountTransaction(params: {
     data?: Hex;
     value?: Hex;
   };
+  skipInitCode?: boolean;
 }, signHash: SignHashFn): Promise<Hex> {
   const nonce = await getSenderNonce(params.smartAccountAddress);
   const callData = encodeSmartAccountExecuteFromData({
@@ -102,7 +97,7 @@ export async function sendSponsoredSmartAccountTransaction(params: {
     sender: params.smartAccountAddress,
     nonce,
     callData,
-    ownerAddress: params.eoaAddress,
+    ownerAddress: params.skipInitCode ? undefined : params.eoaAddress,
   });
   const sponsored = await sponsorViaAlchemy(userOp, params.eoaAddress);
   const hash = await computeUserOpHash(sponsored);
@@ -140,39 +135,12 @@ export async function sendSponsoredContractWriteDetailed(params: {
   });
   const sponsored = await sponsorViaAlchemy(userOp, params.eoaAddress);
   const userOpHash = await computeUserOpHash(sponsored);
-  const viemHash = getUserOperationHash({
-    chainId: params.chainId,
-    entryPointAddress: ENTRY_POINT_V06,
-    entryPointVersion: "0.6",
-    userOperation: {
-      ...sponsored,
-      nonce: BigInt(sponsored.nonce as string),
-      callGasLimit: BigInt(sponsored.callGasLimit as string),
-      verificationGasLimit: BigInt(sponsored.verificationGasLimit as string),
-      preVerificationGas: BigInt(sponsored.preVerificationGas as string),
-      maxFeePerGas: BigInt(sponsored.maxFeePerGas as string),
-      maxPriorityFeePerGas: BigInt(sponsored.maxPriorityFeePerGas as string),
-      signature: "0x",
-    } as never,
-  });
-  const expectedSender = await getCounterfactualAddress(params.eoaAddress);
-  // #region agent log
-  fetch('/api/debug-ingest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'247484',runId:'post-fix',hypothesisId:'B,D,E',location:'sponsoredTransactions.ts:pre-sign',message:'Sponsored userOp before signing',data:{skipInitCode:params.skipInitCode,sender:params.smartAccountAddress,eoaAddress:params.eoaAddress,expectedSender,senderMatchesExpected:expectedSender.toLowerCase()===params.smartAccountAddress.toLowerCase(),initCodeLen:((sponsored.initCode as string)||'').length,verificationGasLimit:sponsored.verificationGasLimit,callGasLimit:sponsored.callGasLimit,preVerificationGas:sponsored.preVerificationGas,userOpHash,viemHash,hashesMatch:userOpHash===viemHash},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   const signature = await signHash({
     hash: userOpHash,
     smartAccountAddress: params.smartAccountAddress,
     chainId: params.chainId,
   });
-  const isRawEcdsa = isRawEcdsaSignature(signature);
-  // #region agent log
-  fetch('/api/debug-ingest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'247484',runId:'post-fix-3',hypothesisId:'A',location:'sponsoredTransactions.ts:post-sign',message:'Signature after signEvmHash and wrap',data:{signatureLen:signature.length,isRawEcdsa,signaturePrefix:signature.slice(0,20),usedEip712:false},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   const bundlerResult = await submitToAlchemyBundler({ ...sponsored, signature });
-  // #region agent log
-  fetch('/api/debug-ingest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'247484',runId:'post-fix',hypothesisId:'A',location:'sponsoredTransactions.ts:bundler-success',message:'Bundler accepted userOp',data:{bundlerResult,userOpHash},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
-  console.log("✅ Bundler accepted sponsored userOp:", { bundlerResult, userOpHash });
 
   return {
     userOpHash,

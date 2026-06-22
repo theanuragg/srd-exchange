@@ -13,23 +13,23 @@ import {
     RefreshCw,
     FileClock,
 } from 'lucide-react'
-import { FC, useState, useEffect } from 'react'
+import { FC, useState, useEffect, useRef } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import Image from 'next/image'
-import { useIsSignedIn, useSignOut, useSignEvmHash } from '@coinbase/cdp-hooks'
+import { useIsSignedIn, useSignOut, useSignEvmHash, useSolanaAddress } from '@coinbase/cdp-hooks'
 import { parseUnits, erc20Abi, isAddress } from 'viem'
 import { useRouter } from 'next/navigation'
 import { useWalletManager } from '@/hooks/useWalletManager'
 import { useChainAssets } from '@/hooks/useChainAssets'
-import { CHAIN_CONFIGS, formatBalance, formatUsd, type TokenAsset } from '@/lib/ankrApi'
+import { formatBalance, formatUsd, type TokenAsset } from '@/lib/ankrApi'
+import { CHAIN_CONFIGS, getChainById, isBNB, isSolana, type ChainId } from '@/lib/chainConfig'
 import { sendSponsoredContractWrite, sendSponsoredSmartAccountTransaction } from '@/lib/sponsoredTransactions'
+import { createSignHashWithRetry } from '@/lib/sponsoredSigning'
 
 interface RightSidebarProps {
     isOpen: boolean
     onClose: () => void
 }
-
-const BSC_CHAIN = CHAIN_CONFIGS.find(c => c.id === 56)!
 
 const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
     const [currentView, setCurrentView] = useState<'Main' | 'Send' | 'Receive'>('Main')
@@ -47,6 +47,8 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
     const [historyTypeFilter, setHistoryTypeFilter] = useState<'All' | 'Deposit' | 'Withdraw'>('All')
     const [selectedAsset, setSelectedAsset] = useState<TokenAsset | null>(null)
     const [showAssetDropdown, setShowAssetDropdown] = useState(false)
+    const [showChainDropdown, setShowChainDropdown] = useState(false)
+    const [showWalletDropdown, setShowWalletDropdown] = useState(false)
 
     const { isSignedIn } = useIsSignedIn()
     const { signOut } = useSignOut()
@@ -56,14 +58,40 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
       address,
       eoaAddress,
       smartWalletAddress,
+      solanaAddress,
+      selectedChain,
+      selectedAddress,
       isConnected,
       signHash,
+      shouldSkipInitCode,
+      switchChain,
     } = useWalletManager()
-    const selectedChainId = 56
+
+    const chainDropdownRef = useRef<HTMLDivElement>(null)
+    const walletDropdownRef = useRef<HTMLDivElement>(null)
+
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (chainDropdownRef.current && !chainDropdownRef.current.contains(e.target as Node)) {
+                setShowChainDropdown(false)
+            }
+            if (walletDropdownRef.current && !walletDropdownRef.current.contains(e.target as Node)) {
+                setShowWalletDropdown(false)
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside)
+        return () => document.removeEventListener('mousedown', handleClickOutside)
+    }, [])
+
+    const chainConfig = getChainById(selectedChain) ?? CHAIN_CONFIGS[0]
+    const assetsAddress = selectedChain === 'solana'
+        ? solanaAddress
+        : smartWalletAddress
+    const displayAddress = selectedAddress ?? address ?? ''
 
     const { assets, totalUsd, isLoading: assetsLoading, error: assetsError, refetch: refetchAssets } = useChainAssets(
-        smartWalletAddress ?? null,
-        selectedChainId
+        assetsAddress,
+        selectedChain
     )
 
     const handleLogout = async () => {
@@ -90,27 +118,31 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
         if (!isAddress(recipient)) throw new Error('Invalid recipient address');
         const amountNum = parseFloat(amount);
         if (isNaN(amountNum) || amountNum <= 0) throw new Error('Enter a valid amount');
+        if (!smartWalletAddress) throw new Error('Smart wallet address not available. Please ensure your account is set up.');
+        if (!eoaAddress) throw new Error('EOA address not available. Please sign in again.');
 
-        const smartAddr = (smartWalletAddress ?? address) as `0x${string}`;
+        const signHashWithRetry = createSignHashWithRetry(signHash);
         if (asset.isNative) {
             return sendSponsoredSmartAccountTransaction({
-                smartAccountAddress: smartAddr,
+                smartAccountAddress: smartWalletAddress as `0x${string}`,
                 eoaAddress: eoaAddress as `0x${string}`,
                 transaction: {
                     to: recipient as `0x${string}`,
                     value: `0x${parseUnits(amount, asset.decimals).toString(16)}` as `0x${string}`,
                 },
-            }, signHash)
+                skipInitCode: shouldSkipInitCode,
+            }, signHashWithRetry)
         }
 
         return sendSponsoredContractWrite({
-            smartAccountAddress: smartAddr,
+            smartAccountAddress: smartWalletAddress as `0x${string}`,
             eoaAddress: eoaAddress as `0x${string}`,
             address: asset.contractAddress as `0x${string}`,
             abi: erc20Abi,
             functionName: 'transfer',
             args: [recipient as `0x${string}`, parseUnits(amount, asset.decimals)],
-        } as any, signHash)
+            skipInitCode: shouldSkipInitCode,
+        } as any, signHashWithRetry)
     }
 
     const handleSend = async () => {
@@ -124,23 +156,27 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
             setTxHash(hash)
             setSendAmount('')
             setRecipientAddress('')
-            setTimeout(() => { if (historyAddress) fetchOnChainHistory(historyAddress) }, 5000)
+            setTimeout(() => { if (historyEvmAddress) fetchOnChainHistory(historyEvmAddress, solanaAddress) }, 5000)
         } catch (err: any) {
             console.error('[Send error]', err)
             let msg = err.message || 'Unknown error'
             if (msg.includes('timeout')) msg = 'Request timed out. Check your connection and try again.'
             else if (msg.includes('rejected') || msg.includes('cancel')) msg = 'Transaction rejected or cancelled.'
+            else if (msg.includes('content blocker') || msg.includes('signing service')) msg = 'Unable to sign transaction. Please disable any ad blockers or content blockers for this site, then try again.'
+            else if (msg.includes('bundler') || msg.includes('userOp') || msg.includes('sponsor')) msg = 'Transaction failed due to a network error. Please try again.'
             setSendError(msg)
         } finally {
             setIsSending(false)
         }
     }
 
-    const fetchOnChainHistory = async (userAddress: string) => {
-        if (!userAddress) return
+    const fetchOnChainHistory = async (evmAddr: string, solAddr?: string | null) => {
+        if (!evmAddr && !solAddr) return
         setIsHistoryLoading(true)
         try {
-            const params = new URLSearchParams({ address: userAddress })
+            const params = new URLSearchParams()
+            if (evmAddr) params.set('address', evmAddr)
+            if (solAddr) params.set('solanaAddress', solAddr)
             const res = await fetch(`/api/wallet/history?${params}`)
             const data = await res.json()
             setHistoryData(data.transactions ?? [])
@@ -152,12 +188,12 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
         }
     }
 
-    const historyAddress = smartWalletAddress ?? address ?? ''
+    const historyEvmAddress = smartWalletAddress ?? address ?? ''
     useEffect(() => {
-        if (isOpen && historyAddress) {
-            fetchOnChainHistory(historyAddress)
+        if (isOpen && historyEvmAddress) {
+            fetchOnChainHistory(historyEvmAddress, solanaAddress)
         }
-    }, [isOpen, historyAddress])
+    }, [isOpen, historyEvmAddress, solanaAddress])
 
     useEffect(() => {
         const fetchRates = async () => {
@@ -199,26 +235,75 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
                         </button>
 
                         <div className="flex items-center gap-2 min-w-0">
-                            <div className="flex items-center gap-1.5 bg-white/5 border border-white/10 px-2.5 py-1.5 rounded-full">
-                                <img
-                                    src={BSC_CHAIN.logo}
-                                    alt={BSC_CHAIN.name}
-                                    className="w-4 h-4 rounded-full shrink-0 object-contain"
-                                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                                />
-                                <span className="text-white text-xs font-medium">{BSC_CHAIN.name}</span>
+                            <div className="relative" ref={chainDropdownRef}>
+                                <button
+                                    onClick={() => setShowChainDropdown(p => !p)}
+                                    className="flex items-center gap-1.5 bg-white/5 border border-white/10 px-2.5 py-1.5 rounded-full hover:bg-white/10 transition-colors"
+                                >
+                                    <img
+                                        src={chainConfig.logo}
+                                        alt={chainConfig.name}
+                                        className="w-4 h-4 rounded-full shrink-0 object-contain"
+                                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                                    />
+                                    <span className="text-white text-xs font-medium">{chainConfig.abbr}</span>
+                                </button>
+
+                                {showChainDropdown && (
+                                    <div className="absolute top-full mt-1 right-0 bg-[#111] border border-white/10 rounded-xl overflow-hidden z-50 shadow-xl min-w-[160px]">
+                                        {CHAIN_CONFIGS.map(chain => (
+                                            <button
+                                                key={chain.id}
+                                                onClick={() => { switchChain(chain.id); setShowChainDropdown(false) }}
+                                                className={`w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 transition-colors text-left ${
+                                                    chain.id === selectedChain ? 'bg-white/5' : ''
+                                                }`}
+                                            >
+                                                <img
+                                                    src={chain.logo}
+                                                    alt={chain.name}
+                                                    className="w-5 h-5 rounded-full shrink-0 object-contain"
+                                                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                                                />
+                                                <span className="text-white text-sm font-medium">{chain.name}</span>
+                                                {chain.id === selectedChain && (
+                                                    <span className="ml-auto text-[#6320EE] text-xs font-bold">✓</span>
+                                                )}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
 
-                            <div className="relative">
+                            <div className="relative" ref={walletDropdownRef}>
                                 <button
-                                    onClick={handleLogout}
+                                    onClick={() => setShowWalletDropdown(p => !p)}
                                     className="flex items-center gap-1.5 bg-white/5 border border-white/10 px-2.5 py-1.5 rounded-full hover:bg-white/10 transition-colors"
                                 >
                                     <Image src="/srd_gen.svg" alt="User" width={18} height={18} className="shrink-0" />
                                     <span className="text-white text-xs font-medium truncate">
-                                        {smartWalletAddress ? formatAddress(smartWalletAddress) : address ? formatAddress(address) : <span className="text-white/40">Loading...</span>}
+                                        {displayAddress ? formatAddress(displayAddress) : <span className="text-white/40">Loading...</span>}
                                     </span>
                                 </button>
+
+                                {showWalletDropdown && (
+                                    <div className="absolute top-full mt-1 right-0 bg-[#111] border border-white/10 rounded-xl overflow-hidden z-50 shadow-xl min-w-[160px]">
+                                        <button
+                                            onClick={() => { copyToClipboard(displayAddress); setShowWalletDropdown(false) }}
+                                            className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 transition-colors text-left"
+                                        >
+                                            <Copy className="w-4 h-4 text-white/60" />
+                                            <span className="text-white text-sm">Copy Address</span>
+                                        </button>
+                                        <button
+                                            onClick={() => { handleLogout(); setShowWalletDropdown(false) }}
+                                            className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 transition-colors text-left"
+                                        >
+                                            <LogOut className="w-4 h-4 text-red-400" />
+                                            <span className="text-red-400 text-sm">Disconnect</span>
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -240,27 +325,29 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
     }
 
     const renderReceiveView = () => {
+        const receiveAddr = isSolana(selectedChain) ? (solanaAddress ?? '') : (smartWalletAddress ?? address ?? '')
+        const chainLabel = isSolana(selectedChain) ? 'Solana' : chainConfig.name + '-compatible'
         return (
             <div className="flex-1 overflow-y-auto [&::-webkit-scrollbar]:hidden animate-in fade-in slide-in-from-right-4 duration-300">
                 <div className="min-h-full flex flex-col items-center justify-center gap-6 px-6 pt-10 pb-28">
                     <p className="text-white/30 text-xs text-center">
-                        All BSC-compatible <span className="text-yellow-400 font-medium">tokens</span> can be securely deposited into this address
+                        All {chainLabel} <span className="text-yellow-400 font-medium">tokens</span> can be securely deposited into this address
                     </p>
 
                     <div className="p-5 bg-white rounded-3xl shadow-2xl">
-                        <QRCodeSVG value={smartWalletAddress || address || ''} size={190} level="H" />
+                        <QRCodeSVG value={receiveAddr} size={190} level="H" />
                     </div>
 
                     <div className="w-full space-y-2">
                         <p className="text-gray-500 text-sm font-medium text-center">
-                            Your Wallet Address
+                            Your {chainConfig.name} Address
                         </p>
                         <div
-                            onClick={() => copyToClipboard(smartWalletAddress || address || '')}
+                            onClick={() => copyToClipboard(receiveAddr)}
                             className="w-full p-4 bg-white/5 border border-white/10 rounded-2xl flex items-center justify-between cursor-pointer hover:bg-white/10 transition-colors group"
                         >
                             <span className="text-white font-mono text-sm break-all flex-1 mr-4">
-                                {smartWalletAddress || address || 'Wallet not connected'}
+                                {receiveAddr || 'Wallet not connected'}
                             </span>
                             <div className="shrink-0">
                                 {copyStatus ? (
@@ -286,7 +373,7 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
                             <span className="font-bold">Transaction Sent!</span>
                         </div>
                         <a
-                            href={`${BSC_CHAIN.explorer}${txHash}`}
+                            href={`${chainConfig.explorer}${txHash}`}
                             target="_blank" rel="noopener noreferrer"
                             className="text-xs text-green-500/80 hover:underline break-all"
                         >
@@ -302,7 +389,7 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
                 )}
 
                 <div className="space-y-2">
-                    <label className="text-white font-semibold block text-sm">Asset <span className="text-white/30 font-normal">(BNB Chain)</span></label>
+                    <label className="text-white font-semibold block text-sm">Asset <span className="text-white/30 font-normal">({chainConfig.name})</span></label>
                     <div className="relative">
                         <button
                             onClick={() => setShowAssetDropdown(p => !p)}
@@ -334,7 +421,7 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
                                 </>
                             ) : (
                                 <span className="text-white/40 text-sm flex-1 text-left">
-                                    {assetsLoading ? 'Loading assets...' : assets.length === 0 ? 'No assets on BNB Chain' : 'Select asset to send'}
+                                    {assetsLoading ? 'Loading assets...' : assets.length === 0 ? `No assets on ${chainConfig.name}` : 'Select asset to send'}
                                 </span>
                             )}
                         </button>
@@ -500,7 +587,7 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
                                             )}
                                             <p className="text-gray-400 text-xs flex items-center gap-1 font-medium mt-1">
                                                 <span className="opacity-50">Portfolio on</span>
-                                                <span style={{ color: BSC_CHAIN.color }}>{BSC_CHAIN.name}</span>
+                                                <span style={{ color: chainConfig.color }}>{chainConfig.name}</span>
                                             </p>
                                         </div>
                                     </div>
@@ -515,15 +602,24 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
                                             </div>
                                             Receive
                                         </button>
-                                        <button
-                                            onClick={() => setCurrentView('Send')}
-                                            className="flex items-center justify-center gap-2 bg-[#6320EE] hover:bg-[#5219d1] text-white py-4 rounded-xl font-bold text-lg transition-all active:scale-95"
-                                        >
-                                            <div className="w-6 h-6 rounded-full flex items-center justify-center">
-                                                <Image src="/send.svg" alt="Send" width={24} height={24} />
+                                        {isBNB(selectedChain) ? (
+                                            <button
+                                                onClick={() => setCurrentView('Send')}
+                                                className="flex items-center justify-center gap-2 bg-[#6320EE] hover:bg-[#5219d1] text-white py-4 rounded-xl font-bold text-lg transition-all active:scale-95"
+                                            >
+                                                <div className="w-6 h-6 rounded-full flex items-center justify-center">
+                                                    <Image src="/send.svg" alt="Send" width={20} height={20} />
+                                                </div>
+                                                Send
+                                            </button>
+                                        ) : (
+                                            <div className="flex items-center justify-center gap-2 bg-white/5 border border-white/10 text-white/40 py-4 rounded-xl font-bold text-lg cursor-not-allowed">
+                                                <div className="w-6 h-6 rounded-full flex items-center justify-center opacity-40">
+                                                    <Image src="/send.svg" alt="Send" width={20} height={20} />
+                                                </div>
+                                                View-only
                                             </div>
-                                            Send
-                                        </button>
+                                        )}
                                     </div>
 
                                     <hr className="border-white/5" />
@@ -532,7 +628,7 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
                                         <div className="flex items-center justify-between">
                                             <div>
                                                 <span className="text-white font-bold">Assets</span>
-                                                <span className="text-white/40 text-xs ml-2">{BSC_CHAIN.name}</span>
+                                                <span className="text-white/40 text-xs ml-2">{chainConfig.name}</span>
                                             </div>
                                             <div className="flex items-center gap-2">
                                                 <span className="text-white/40 text-xs">${totalUsd}</span>
@@ -559,7 +655,7 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
                                             )}
                                             {!assetsLoading && !assetsError && assets.length === 0 && (
                                                 <div className="text-center py-6 text-white/30 text-sm">
-                                                    No assets on {BSC_CHAIN.name}
+                                                    No assets on {chainConfig.name}
                                                 </div>
                                             )}
                                             {!assetsLoading && assets.map((asset, i) => (
@@ -629,7 +725,7 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
                             </div>
 
                             <div className="flex items-center justify-between px-4 py-2 shrink-0 border-b border-white/5">
-                                <div className="text-white/40 text-xs">BNB Chain</div>
+                                <div className="text-white/40 text-xs">{chainConfig.name}</div>
                                 <div className="flex items-center gap-1">
                                     {(['All', 'Deposit', 'Withdraw'] as const).map(tab => (
                                         <button
@@ -650,12 +746,16 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
                                         <p className="text-white/30 text-xs">Fetching transactions...</p>
                                     </div>
                                 ) : historyData.filter(item =>
-                                    historyTypeFilter === 'All' || item.type === historyTypeFilter
+                                    (historyTypeFilter === 'All' || item.type === historyTypeFilter) &&
+                                    (item.chainId === selectedChain || (selectedChain === 'solana' ? item.chainId === 101 : item.chainId === selectedChain))
                                 ).length === 0 ? (
                                     <div className="text-center py-12 text-white/30 text-sm">No transactions found</div>
                                 ) : (
                                     historyData
-                                        .filter(item => historyTypeFilter === 'All' || item.type === historyTypeFilter)
+                                        .filter(item =>
+                                            (historyTypeFilter === 'All' || item.type === historyTypeFilter) &&
+                                            (item.chainId === selectedChain || (selectedChain === 'solana' ? item.chainId === 101 : item.chainId === selectedChain))
+                                        )
                                         .map((item, i) => (
                                             <div key={`${item.hash}-${i}`} className="flex items-center justify-between p-3 hover:bg-white/5 border border-white/5 rounded-xl transition-colors">
                                                 <div className="flex items-center gap-3">

@@ -231,9 +231,6 @@ export async function submitToAlchemyBundler(userOp: Record<string, unknown>): P
   });
   const data = await response.json();
   if (data.error) {
-    // #region agent log
-    fetch('/api/debug-ingest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'247484',runId:'post-fix',hypothesisId:'A,C,E',location:'userOpBuilder.ts:bundler-error',message:'Bundler rejected userOp',data:{errorMessage:data.error.message,errorCode:data.error.code,errorData:data.error.data,sender:userOp.sender,initCodeLen:((userOp.initCode as string)||'').length,signatureLen:((userOp.signature as string)||'').length,verificationGasLimit:userOp.verificationGasLimit,callGasLimit:userOp.callGasLimit},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     throw new Error(`Alchemy bundler error: ${data.error.message}`);
   }
   return data.result as Hex;

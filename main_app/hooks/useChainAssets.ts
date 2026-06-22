@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { fetchChainAssets, type TokenAsset } from '@/lib/ankrApi';
+import type { ChainId } from '@/lib/chainConfig';
 
 interface UseChainAssetsResult {
   assets: TokenAsset[];
@@ -11,7 +12,7 @@ interface UseChainAssetsResult {
 
 export function useChainAssets(
   address: string | null | undefined,
-  chainId: number
+  chainId: ChainId
 ): UseChainAssetsResult {
   const [assets, setAssets] = useState<TokenAsset[]>([]);
   const [isLoading, setIsLoading] = useState(false);

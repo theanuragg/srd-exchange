@@ -20,9 +20,11 @@ export default function Providers({ children }: { children: ReactNode }) {
     <CDPReactProvider
       config={{
         projectId: process.env.NEXT_PUBLIC_CDP_PROJECT_ID!,
+        appLogoUrl: 'https://srd.exchange/srd_final.svg',
         appName: 'SRD Exchange',
         ethereum: { createOnLogin: "smart" },
-        authMethods: ["sms", "oauth:google", "oauth:telegram", "oauth:apple", "oauth:x"],
+        authMethods: ["sms","email",  "oauth:google", "oauth:telegram", "oauth:apple", "oauth:x", ],
+        showCoinbaseFooter: false,
       }}
       theme={{
         "colors-bg-default": "#111111",

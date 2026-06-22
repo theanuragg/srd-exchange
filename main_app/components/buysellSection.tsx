@@ -23,6 +23,7 @@ import BankDetailsModal, { BankDetailsData } from "./modal/bank-details-modal";
 import { useBankDetails } from "@/hooks/useBankDetails";
 import { parseAbi, parseUnits, formatUnits, type Address, type Hex } from "viem";
 import { sendSponsoredContractWriteDetailed } from "@/lib/sponsoredTransactions";
+import { createSignHashWithRetry } from "@/lib/sponsoredSigning";
 import { retryWithRPCFailover } from "@/lib/rpcManager";
 
 const CONTRACTS = {
@@ -136,40 +137,7 @@ export default function BuySellSection() {
           functionName: "transfer",
           args: [recipientAddress as `0x${string}`, parsedAmount],
           skipInitCode: shouldSkipInitCode,
-        }, async ({ hash, smartAccountAddress, chainId }: { hash: Hex; smartAccountAddress?: Address; chainId?: number }) => {
-          console.log("✍️ Signing userOp hash with CDP:", {
-            eoaAddress,
-            hash,
-            smartAccountAddress,
-            chainId,
-          });
-          const MAX_SIGN_RETRIES = 3;
-          for (let attempt = 1; attempt <= MAX_SIGN_RETRIES; attempt++) {
-            try {
-              const result = await signHash({ hash, smartAccountAddress, chainId });
-              console.log("✅ UserOp hash signed successfully on attempt", attempt);
-              return result;
-            } catch (signErr: any) {
-              const isNetworkBlocked = signErr.message?.includes?.("Failed to fetch")
-                || signErr.message?.includes?.("content blocker")
-                || signErr.message?.includes?.("signing service");
-              const isAccountNotFound = signErr.message?.includes?.("EVM account not found")
-                || signErr.message?.includes?.("account not found");
-              console.warn(`⚠️ Signing attempt ${attempt}/${MAX_SIGN_RETRIES} failed:`, {
-                error: signErr.message,
-                isAccountNotFound,
-                isNetworkBlocked,
-              });
-              if (attempt === MAX_SIGN_RETRIES) throw signErr;
-              // Don't retry on network/blocker errors — they won't resolve with retries
-              if (isNetworkBlocked) throw signErr;
-              if (!isAccountNotFound) throw signErr;
-              await new Promise(r => setTimeout(r, 1500));
-              console.log("🔄 Retrying signHash after delay...");
-            }
-          }
-          throw new Error("Signing failed after all retries");
-        });
+        }, createSignHashWithRetry(signHash));
 
       console.log("✅ Sponsored sell transfer submitted", result);
 

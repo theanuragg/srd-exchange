@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
-import { useIsSignedIn, useEvmAddress, useEvmAccounts, useEvmSmartAccounts, useSignEvmHash, useSignEvmTransaction } from '@coinbase/cdp-hooks';
+import { useIsSignedIn, useEvmAddress, useEvmAccounts, useEvmSmartAccounts, useSignEvmHash, useSignEvmTransaction, useSolanaAddress, useCreateSolanaAccount } from '@coinbase/cdp-hooks';
 import { parseUnits, formatUnits, Address, type Hex, type TransactionSerializableEIP1559 } from "viem";
 import { retryWithRPCFailover } from "@/lib/rpcManager";
 import { sendSponsoredContractWrite } from "@/lib/sponsoredTransactions";
 import { getCounterfactualAddress, buildDeployTxData, broadcastRawTx, isAccountDeployed } from "@/lib/userOpBuilder";
 import { wrapCoinbaseSmartWalletSignature } from "@/lib/coinbaseSmartWalletSignature";
+import type { ChainId } from '@/lib/chainConfig';
 
 const GAS_STATION_ENABLED =
   process.env.NEXT_PUBLIC_GAS_STATION_ENABLED === "true";
@@ -327,6 +328,27 @@ export function useWalletManager() {
       ? true
       : (fallbackSmartAccount ?? getCached(eoaAddress))
   );
+  const { solanaAddress: cdpSolanaAddress } = useSolanaAddress();
+  const { createSolanaAccount } = useCreateSolanaAccount();
+  const [selectedChain, setSelectedChain] = useState<ChainId>(56);
+  const solanaAddress = cdpSolanaAddress ?? null;
+
+  const switchChain = async (chainId: ChainId) => {
+    setSelectedChain(chainId);
+    if (chainId === 'solana' && !cdpSolanaAddress) {
+      try {
+        await createSolanaAccount();
+      } catch (e) {
+        console.error('Failed to create Solana account:', e);
+      }
+    }
+  };
+
+  const selectedAddress: string | null = (() => {
+    if (selectedChain === 'solana') return solanaAddress;
+    return smartWalletAddress ?? eoaAddress ?? null;
+  })();
+
   const isConnected = isSignedIn;
   const isConnecting = false;
   const chainId = 56;
@@ -1205,6 +1227,9 @@ export function useWalletManager() {
     address,
     eoaAddress,
     smartWalletAddress,
+    solanaAddress,
+    selectedChain,
+    selectedAddress,
     isConnected,
     isConnecting,
     isSmartAccountReady,
@@ -1214,7 +1239,7 @@ export function useWalletManager() {
     isLoading: isLoading || isPending || isConfirming,
     fetchWalletData,
     refetchBalances,
-    switchChain: async () => {},
+    switchChain,
     isOnBSC: true,
     switchToBSC: async () => true,
     canTrade: true,
