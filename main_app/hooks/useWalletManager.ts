@@ -1,17 +1,11 @@
-import { useState, useEffect, useRef } from "react";
-import {
-  useAccount,
-  useSwitchChain,
-  usePublicClient,
-  useWallets,
-  useSmartAccount,
-  useAddress,
-} from "@particle-network/connectkit";
-import { parseUnits, formatUnits, Address } from "viem";
-import { bsc } from "@particle-network/connectkit/chains";
-import { PublicClient } from "viem";
-import { retryWithRPCFailover, rpcManager } from "@/lib/rpcManager";
+import { useState, useEffect } from "react";
+import { useIsSignedIn, useEvmAddress, useEvmAccounts, useEvmSmartAccounts, useSignEvmHash, useSignEvmTransaction, useSolanaAddress, useCreateSolanaAccount } from '@coinbase/cdp-hooks';
+import { parseUnits, formatUnits, Address, type Hex, type TransactionSerializableEIP1559 } from "viem";
+import { retryWithRPCFailover } from "@/lib/rpcManager";
 import { sendSponsoredContractWrite } from "@/lib/sponsoredTransactions";
+import { getCounterfactualAddress, buildDeployTxData, broadcastRawTx, isAccountDeployed } from "@/lib/userOpBuilder";
+import { wrapCoinbaseSmartWalletSignature } from "@/lib/coinbaseSmartWalletSignature";
+import type { ChainId } from '@/lib/chainConfig';
 
 const GAS_STATION_ENABLED =
   process.env.NEXT_PUBLIC_GAS_STATION_ENABLED === "true";
@@ -230,50 +224,143 @@ const createSerializableWalletData = (walletInfo: any) => {
 };
 
 export function useWalletManager() {
-  const { address: eoaAddress, isConnected, chainId, chain, status } = useAccount();
-  const smartAddress = useAddress();
-  const address = smartAddress ?? eoaAddress;
-  const { switchChainAsync } = useSwitchChain();
-  const publicClient = usePublicClient() as PublicClient;
-  const [primaryWallet] = useWallets();
-  const smartAccount = useSmartAccount();
-  const isConnecting = status === "connecting" || status === "reconnecting";
+  const { isSignedIn } = useIsSignedIn();
+  const { evmAddress: smartOrEoaAddress } = useEvmAddress();
+  const { evmAccounts: eoaAccounts } = useEvmAccounts();
+  const eoaAddress = (eoaAccounts?.[0]?.address as Address) ?? smartOrEoaAddress;
+  const { signEvmHash } = useSignEvmHash();
+  const signHash = async ({
+    hash,
+    smartAccountAddress,
+    chainId: _chainId = 56,
+  }: {
+    hash: Hex;
+    smartAccountAddress?: Address;
+    chainId?: number;
+  }) => {
+    if (!eoaAddress) {
+      throw new Error("EVM account not found: wallet EOA address is not available. Please sign in again.");
+    }
+    if (!isSignedIn) {
+      throw new Error("EVM account not found: user session has expired. Please sign in again.");
+    }
+    try {
+      const result = await signEvmHash({ evmAccount: eoaAddress as `0x${string}`, hash });
+      if (smartAccountAddress) {
+        return wrapCoinbaseSmartWalletSignature(result.signature);
+      }
+      return result.signature;
+    } catch (err: any) {
+      let isAdBlockerActive = false;
+      try {
+        await fetch("https://cca-lite.coinbase.com/amp", { mode: "no-cors" });
+      } catch (fetchErr) {
+        isAdBlockerActive = true;
+      }
+
+      if (isAdBlockerActive) {
+        throw new Error(
+          "EVM account not found: Failed to reach Coinbase signing service due to an active ad blocker or content blocker. " +
+          "Please disable Brave Shields or your ad blocker extension for this site and try again."
+        );
+      }
+
+      if (err?.message?.includes?.("Failed to fetch")) {
+        throw new Error(
+          "EVM account not found: Failed to reach Coinbase signing service. " +
+          "If you have an ad blocker or content blocker enabled, please disable it for this site and try again."
+        );
+      }
+      throw err;
+    }
+  };
+  const smartAccounts = useEvmSmartAccounts();
+  const cdpSmartAccount: Address | undefined = (() => {
+    if (!smartAccounts?.evmSmartAccounts?.length) return undefined;
+    const addr = smartAccounts.evmSmartAccounts[0].address as Address;
+    if (addr.toLowerCase() === (eoaAddress ?? "").toLowerCase()) return undefined;
+    return addr;
+  })();
+  const [isCdpSmartAccountDeployed, setIsCdpSmartAccountDeployed] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!cdpSmartAccount) {
+      setIsCdpSmartAccountDeployed(null);
+      return;
+    }
+    let cancelled = false;
+    isAccountDeployed(cdpSmartAccount).then(deployed => {
+      if (!cancelled) setIsCdpSmartAccountDeployed(deployed);
+    });
+    return () => { cancelled = true; };
+  }, [cdpSmartAccount]);
+  const CACHE_PREFIX = "swa_";
+  const getCached = (eoa: Address | undefined): Address | undefined => {
+    if (!eoa) return undefined;
+    try {
+      const c = localStorage.getItem(CACHE_PREFIX + eoa.toLowerCase());
+      if (c && c.startsWith("0x") && c.length === 42) return c as Address;
+    } catch {}
+    return undefined;
+  };
+  const setCached = (eoa: Address, addr: Address) => {
+    try { localStorage.setItem(CACHE_PREFIX + eoa.toLowerCase(), addr); } catch {}
+  };
+  const [fallbackSmartAccount, setFallbackSmartAccount] = useState<Address | undefined>(
+    getCached(eoaAddress)
+  );
+  useEffect(() => {
+    if (!eoaAddress) return;
+    const cached = getCached(eoaAddress);
+    if (cached) { setFallbackSmartAccount(cached); return; }
+    getCounterfactualAddress(eoaAddress as Address).then(cf => {
+      setFallbackSmartAccount(cf);
+      setCached(eoaAddress as Address, cf);
+    }).catch(err => {
+      console.error("❌ Counterfactual address failed:", err);
+    });
+  }, [eoaAddress]);
+  const shouldUseCdpSmartAccount = !!(cdpSmartAccount && isCdpSmartAccountDeployed);
+  const smartAccountAddress = shouldUseCdpSmartAccount ? cdpSmartAccount : fallbackSmartAccount;
+  const address = smartAccountAddress ?? eoaAddress;
+  const smartWalletAddress = smartAccountAddress;
+  const isSmartAccountReady = !!(
+    (cdpSmartAccount && isCdpSmartAccountDeployed)
+      ? true
+      : (fallbackSmartAccount ?? getCached(eoaAddress))
+  );
+  const { solanaAddress: cdpSolanaAddress } = useSolanaAddress();
+  const { createSolanaAccount } = useCreateSolanaAccount();
+  const [selectedChain, setSelectedChain] = useState<ChainId>(56);
+  const solanaAddress = cdpSolanaAddress ?? null;
+
+  const switchChain = async (chainId: ChainId) => {
+    setSelectedChain(chainId);
+    if (chainId === 'solana' && !cdpSolanaAddress) {
+      try {
+        await createSolanaAccount();
+      } catch (e) {
+        console.error('Failed to create Solana account:', e);
+      }
+    }
+  };
+
+  const selectedAddress: string | null = (() => {
+    if (selectedChain === 'solana') return solanaAddress;
+    return smartWalletAddress ?? eoaAddress ?? null;
+  })();
+
+  const isConnected = isSignedIn;
+  const isConnecting = false;
+  const chainId = 56;
   const [walletData, setWalletData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [bnbBalance, setBnbBalance] = useState<bigint | null>(null);
   const [usdtBalance, setUsdtBalance] = useState<bigint | null>(null);
   const [usdtDecimals, setUsdtDecimals] = useState<number | null>(null);
-  const [resolvedSmartWalletAddress, setResolvedSmartWalletAddress] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
   const [isPending, setIsPending] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
-  const balanceAddress = resolvedSmartWalletAddress ?? smartAddress ?? eoaAddress;
-
-  useEffect(() => {
-    let cancelled = false;
-
-    if (!isConnected || !smartAccount || !eoaAddress) {
-      setResolvedSmartWalletAddress(null);
-      return;
-    }
-
-    smartAccount
-      .getAccount()
-      .then((account) => {
-        if (cancelled) return;
-        setResolvedSmartWalletAddress(account?.smartAccountAddress ?? null);
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          console.warn("Failed to resolve smart account address:", error);
-          setResolvedSmartWalletAddress(null);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isConnected, smartAccount, eoaAddress]);
+  const balanceAddress = address;
 
   const refetchBnb = async () => {
     if (!balanceAddress) return;
@@ -292,7 +379,7 @@ export function useWalletManager() {
   };
 
   const refetchUsdt = async () => {
-    if (!balanceAddress || chainId !== bsc.id) return;
+    if (!balanceAddress) return;
 
     try {
       const balance = await retryWithRPCFailover(async (client) => {
@@ -325,11 +412,11 @@ export function useWalletManager() {
   };
 
   useEffect(() => {
-    if (balanceAddress && chainId === bsc.id) {
+    if (balanceAddress) {
       refetchBnb();
       refetchUsdt();
     }
-  }, [balanceAddress, chainId]);
+  }, [balanceAddress]);
 
   useEffect(() => {
     if (usdtBalance && balanceAddress) {
@@ -348,22 +435,77 @@ export function useWalletManager() {
     }
   }, [usdtBalance, usdtDecimals, balanceAddress, chainId]);
 
-  const isOnBSC = chainId === bsc.id;
+  const isOnBSC = true;
 
   const readContractHelper = async (params: {
     address: Address;
     abi: any;
     functionName: string;
     args?: any[];
-  }) => {
-    if (!publicClient) {
-      throw new Error("Public client not available");
+  }): Promise<any> => {
+    return await retryWithRPCFailover(async (client) => {
+      return await client.readContract({
+        address: params.address,
+        abi: params.abi,
+        functionName: params.functionName,
+        args: params.args,
+      });
+    });
+  };
+
+  const { signEvmTransaction } = useSignEvmTransaction();
+
+  const deployAccount = async (): Promise<Hex> => {
+    if (!eoaAddress) throw new Error("EOA not available");
+    const smartAccountAddr = smartAccountAddress;
+    if (!smartAccountAddr) throw new Error("Smart account address not available");
+    const alreadyDeployed = await isAccountDeployed(smartAccountAddr);
+    if (alreadyDeployed) {
+      console.log("✅ Smart account already deployed:", smartAccountAddr);
+      return "0x" as Hex;
     }
-    const evmClient = publicClient as any;
-    if (!evmClient.readContract) {
-      throw new Error("Public client does not support readContract (might be Solana Connection)");
+    setIsPending(true);
+    try {
+      const { to, data } = buildDeployTxData(eoaAddress);
+      const nonceResult = await retryWithRPCFailover(async (client) => {
+        return client.getTransactionCount({ address: eoaAddress! });
+      });
+      if (nonceResult === null) throw new Error("Failed to get EOA nonce");
+      const nonce = nonceResult;
+
+      const tx: TransactionSerializableEIP1559 = {
+        chainId: 56,
+        nonce,
+        maxFeePerGas: 5000000000n,
+        maxPriorityFeePerGas: 2000000000n,
+        gas: 300000n,
+        to,
+        data,
+        value: 0n,
+      };
+
+      const { signedTransaction } = await signEvmTransaction({
+        evmAccount: eoaAddress,
+        transaction: tx,
+      });
+
+      const deployTxHash = await broadcastRawTx(signedTransaction);
+      console.log("⏳ Waiting for deploy tx:", deployTxHash);
+
+      for (let i = 0; i < 30; i++) {
+        const deployed = await isAccountDeployed(smartAccountAddress!);
+        if (deployed) {
+          console.log("✅ Smart account deployed:", smartAccountAddress);
+          setIsPending(false);
+          return deployTxHash;
+        }
+        await new Promise(r => setTimeout(r, 2000));
+      }
+      throw new Error("Deployment timed out after 60s");
+    } catch (error) {
+      setIsPending(false);
+      throw error;
     }
-    return await evmClient.readContract(params);
   };
 
   const writeContractHelper = async (params: {
@@ -372,41 +514,23 @@ export function useWalletManager() {
     functionName: string;
     args: any[];
   }) => {
+    const smartAccountAddr = smartAccountAddress;
     if (!address) throw new Error("Wallet not connected");
+    if (!smartAccountAddr) throw new Error("Smart account not available");
 
     setIsPending(true);
     try {
-      if (chainId === bsc.id && smartAccount) {
-        const hash = await sendSponsoredContractWrite({
-          smartAccount,
-          chainId,
-          address: params.address,
-          abi: params.abi,
-          functionName: params.functionName,
-          args: params.args,
-        });
+      const hash = await sendSponsoredContractWrite({
+        smartAccountAddress: smartAccountAddr,
+        eoaAddress: eoaAddress as Address,
+        address: params.address,
+        abi: params.abi,
+        functionName: params.functionName,
+        args: params.args,
+        skipInitCode: shouldUseCdpSmartAccount,
+      }, signHash);
 
-        setTxHash(hash);
-        setIsConfirming(false);
-        setIsPending(false);
-        return hash;
-      }
-
-      if (!primaryWallet) throw new Error("Wallet not connected");
-      if (!publicClient) throw new Error("Public client not available");
-
-      const walletClient = primaryWallet.getWalletClient();
-      const hash = await walletClient.writeContract({
-        ...params,
-        account: address as Address,
-        chain: chain || bsc,
-      });
       setTxHash(hash);
-      setIsConfirming(true);
-
-      if (publicClient && 'waitForTransactionReceipt' in publicClient) {
-        await (publicClient as any).waitForTransactionReceipt({ hash });
-      }
       setIsConfirming(false);
       setIsPending(false);
       return hash;
@@ -414,20 +538,6 @@ export function useWalletManager() {
       setIsPending(false);
       setIsConfirming(false);
       throw error;
-    }
-  };
-
-  const switchToBSC = async (): Promise<boolean> => {
-    try {
-      if (chainId !== bsc.id) {
-        console.log("🔄 Switching to BSC Mainnet...");
-        await switchChainAsync({ chainId: bsc.id });
-        return true;
-      }
-      return true;
-    } catch (error) {
-      console.error("Failed to switch to BSC Mainnet:", error);
-      return false;
     }
   };
 
@@ -439,13 +549,6 @@ export function useWalletManager() {
     }
 
     try {
-      if (chainId !== bsc.id) {
-        console.log("🔄 Must switch to BSC Mainnet...");
-        await switchChainAsync({ chainId: bsc.id });
-        setIsLoading(false);
-        return null;
-      }
-
       console.log("📊 Fetching wallet data for BSC Mainnet...");
 
       let formattedUsdtBalance = "0";
@@ -467,7 +570,7 @@ export function useWalletManager() {
 
       const walletInfo = {
         address: balanceAddress,
-        chainId: bsc.id,
+        chainId: 56,
         isOnBSC: true,
         balances: {
           bnb: {
@@ -791,13 +894,12 @@ export function useWalletManager() {
     amount: string,
   ) => {
     if (!address) throw new Error("Wallet not connected");
-    if (chainId !== bsc.id) throw new Error("Please switch to BSC Mainnet");
 
     console.log("💸 Starting sponsored USDT transfer on BSC Mainnet:", {
       from: address,
       to,
       amount,
-      chainId: bsc.id,
+      chainId: 56,
     });
 
     try {
@@ -914,29 +1016,14 @@ export function useWalletManager() {
   };
 
   useEffect(() => {
-    if (isConnected && balanceAddress && chainId === bsc.id) {
+    if (isConnected && balanceAddress) {
       fetchWalletData();
-    } else if (isConnected && balanceAddress && chainId !== bsc.id) {
-      console.log("⚠️ Not on BSC Mainnet, showing warning state");
-      setWalletData({
-        address: balanceAddress,
-        chainId,
-        balances: {
-          bnb: { raw: "0", formatted: "0", symbol: "BNB" },
-          usdt: { raw: "0", formatted: "0", symbol: "USDT" },
-        },
-        canTrade: false,
-        lastUpdated: new Date().toISOString(),
-        needsMainnet: true,
-      });
     }
-  }, [isConnected, balanceAddress, chainId, bnbBalance, usdtBalance, usdtDecimals]);
+  }, [isConnected, balanceAddress, bnbBalance, usdtBalance, usdtDecimals]);
 
   const refetchBalances = async () => {
-    if (chainId === bsc.id) {
-      await Promise.all([refetchBnb(), refetchUsdt()]);
-      await fetchWalletData();
-    }
+    await Promise.all([refetchBnb(), refetchUsdt()]);
+    await fetchWalletData();
   };
 
   const createSellOrderOnChain = async (
@@ -1139,18 +1226,23 @@ export function useWalletManager() {
   return {
     address,
     eoaAddress,
-    smartWalletAddress: resolvedSmartWalletAddress ?? smartAddress,
+    smartWalletAddress,
+    solanaAddress,
+    selectedChain,
+    selectedAddress,
     isConnected,
     isConnecting,
+    isSmartAccountReady,
+    shouldSkipInitCode: shouldUseCdpSmartAccount,
     chainId,
     walletData,
     isLoading: isLoading || isPending || isConfirming,
     fetchWalletData,
     refetchBalances,
-    switchChain: switchChainAsync,
-    isOnBSC,
-    switchToBSC,
-    canTrade: walletData?.canTrade || false,
+    switchChain,
+    isOnBSC: true,
+    switchToBSC: async () => true,
+    canTrade: true,
 
     createBuyOrderOnChain,
     createDirectSellOrderOnChain,
@@ -1167,6 +1259,10 @@ export function useWalletManager() {
 
     createSellOrder,
     createBuyOrder,
+
+    deployAccount,
+
+    signHash,
 
     hash: txHash,
     isPending,

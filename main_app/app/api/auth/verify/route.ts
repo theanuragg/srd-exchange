@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
+import { prisma, withDatabaseRetry } from '@/lib/prisma'
 
 export async function POST(request: NextRequest) {
   try {
@@ -12,14 +12,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const user = await prisma.user.findUnique({
+    const user = await withDatabaseRetry(() => prisma.user.findFirst({
       where: {
-        walletAddress: walletAddress.toLowerCase()
+        OR: [
+          { walletAddress: walletAddress.toLowerCase() },
+          { smartWalletAddress: walletAddress.toLowerCase() }
+        ]
       },
       include: {
         bankDetails: true
       }
-    })
+    }))
 
     if (!user) {
       console.log("User not found for address:", walletAddress);

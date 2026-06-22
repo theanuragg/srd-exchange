@@ -3,13 +3,13 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
-import { useAccount, useDisconnect, useModal } from "@particle-network/connectkit";
+import { useIsSignedIn } from '@coinbase/cdp-hooks';
+import { SignInModal, SignInModalContent } from '@coinbase/cdp-react';
 
 export default function LandingPage() {
   const [isMobile, setIsMobile] = useState(false);
-  const { setOpen } = useModal();
-  const { isConnected } = useAccount();
-  const { disconnect } = useDisconnect();
+  const [walletModalOpen, setWalletModalOpen] = useState(false);
+  const { isSignedIn } = useIsSignedIn();
   const router = useRouter();
 
   useEffect(() => {
@@ -23,32 +23,17 @@ export default function LandingPage() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Clear any persistent state when landing page loads
   useEffect(() => {
-    // If user is connected but on landing page, they might want to use a different account
-    // So we should clear the modal state to ensure fresh experience
-    if (typeof window !== 'undefined') {
-      // Clear any modal state or cached data that might interfere
-      sessionStorage.removeItem('modal-state');
-      sessionStorage.removeItem('wallet-modal-state');
-    }
-  }, []);
-
-  // Redirect to dashboard when user connects
-  useEffect(() => {
-    if (isConnected) {
-      console.log('User connected, redirecting to dashboard...');
+    if (isSignedIn) {
       router.push('/fiat');
     }
-  }, [isConnected, router]);
+  }, [isSignedIn, router]);
 
   const handleTradeNow = () => {
-    if (isConnected) {
-      // If already connected, redirect to dashboard immediately
+    if (isSignedIn) {
       router.push('/fiat');
     } else {
-      // If not connected, open the wallet modal for connection
-      setOpen(true);
+      setWalletModalOpen(true);
     }
   };
 
@@ -288,44 +273,47 @@ export default function LandingPage() {
         </div>
 
         {/* Updated Trade Now Button */}
-        <motion.button
-          onClick={handleTradeNow}
-          className="bg-[#622DBF] text-white md:text-xl text-lg font-semibold md:px-12 md:py-4 px-6 py-2 rounded-sm transition-all duration-200 flex items-center space-x-3 shadow-xl hover:shadow-purple-500/25 transform hover:scale-105"
-          initial={{ opacity: 0, y: 50 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 2.4 }}
-          whileHover={{
-            scale: 1.05,
-            boxShadow: "0 20px 40px rgba(98, 45, 191, 0.4)"
-          }}
-          whileTap={{ scale: 0.95 }}
-        >
-          <span>Trade Now !</span>
-          <motion.svg
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            animate={{ x: [0, 5, 0] }}
-            transition={{ duration: 2, repeat: Infinity }}
+        <SignInModal open={walletModalOpen} setIsOpen={setWalletModalOpen}>
+          <motion.button
+            onClick={handleTradeNow}
+            className="bg-[#622DBF] text-white md:text-xl text-lg font-semibold md:px-12 md:py-4 px-6 py-2 rounded-sm transition-all duration-200 flex items-center space-x-3 shadow-xl hover:shadow-purple-500/25 transform hover:scale-105"
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 2.4 }}
+            whileHover={{
+              scale: 1.05,
+              boxShadow: "0 20px 40px rgba(98, 45, 191, 0.4)"
+            }}
+            whileTap={{ scale: 0.95 }}
           >
-            <path
-              d="M7 7H17V17"
-              stroke="white"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <path
-              d="M7 17L17 7"
-              stroke="white"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </motion.svg>
-        </motion.button>
+            <span>Trade Now !</span>
+            <motion.svg
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              animate={{ x: [0, 5, 0] }}
+              transition={{ duration: 2, repeat: Infinity }}
+            >
+              <path
+                d="M7 7H17V17"
+                stroke="white"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M7 17L17 7"
+                stroke="white"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </motion.svg>
+          </motion.button>
+          <SignInModalContent />
+        </SignInModal>
       </div>
     </div>
   );

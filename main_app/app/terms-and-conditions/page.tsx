@@ -1,11 +1,11 @@
 'use client'
 
-import { useAccount } from '@particle-network/connectkit'
+import { useWalletManager } from '@/hooks/useWalletManager'
 import { useRouter } from 'next/navigation'
 import SimpleNav from '@/components/simple-nav'
 
 export default function TermsAndConditionsPage() {
-  const { address } = useAccount()
+  const { address } = useWalletManager()
   const router = useRouter()
 
   const handleAcceptTerms = () => {

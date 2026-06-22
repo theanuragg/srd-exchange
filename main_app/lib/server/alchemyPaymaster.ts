@@ -1,11 +1,72 @@
 import "server-only";
 
+import { readFileSync } from "node:fs";
+import { encodeAbiParameters } from "viem";
 import { UserOperation, isEntryPointV07UserOperation, isHexString } from "@/lib/userOperation";
 
 const BNB_CHAIN_ID = 56;
 const BNB_CHAIN_ID_HEX = "0x38";
 const DEFAULT_DUMMY_SIGNATURE =
   "0xfffffffffffffffffffffffffffffff0000000000000000000000000000000007aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1c";
+const COINBASE_SIGNATURE_WRAPPER_ABI = [
+  {
+    type: "tuple",
+    components: [
+      { name: "ownerIndex", type: "uint256" },
+      { name: "signatureData", type: "bytes" },
+    ],
+  },
+] as const;
+const DEBUG_ENV_PATH = ".dbg/aa23-sponsor-failure.env";
+const DEBUG_RUN_ID = "post-fix";
+
+function getDebugConfig(): { url: string; sessionId: string } {
+  let url = "http://127.0.0.1:7777/event";
+  let sessionId = "aa23-sponsor-failure";
+  try {
+    const env = readFileSync(DEBUG_ENV_PATH, "utf8");
+    url = env.match(/DEBUG_SERVER_URL=(.+)/)?.[1]?.trim() || url;
+    sessionId = env.match(/DEBUG_SESSION_ID=(.+)/)?.[1]?.trim() || sessionId;
+  } catch {}
+  return { url, sessionId };
+}
+
+async function reportDebugEvent(
+  hypothesisId: "A" | "B" | "C" | "D" | "E",
+  location: string,
+  msg: string,
+  data: Record<string, unknown>,
+  traceId?: string
+): Promise<void> {
+  const { url, sessionId } = getDebugConfig();
+  await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sessionId,
+      runId: DEBUG_RUN_ID,
+      hypothesisId,
+      location,
+      msg: `[DEBUG] ${msg}`,
+      data,
+      traceId,
+      ts: Date.now(),
+    }),
+  }).catch(() => {});
+}
+
+function getSimulationSignature(signature: UserOperation["signature"] | undefined) {
+  if (isHexString(signature) && signature !== "0x") {
+    return signature;
+  }
+
+  return encodeAbiParameters(COINBASE_SIGNATURE_WRAPPER_ABI, [
+    {
+      ownerIndex: 0n,
+      signatureData: DEFAULT_DUMMY_SIGNATURE,
+    },
+  ]);
+}
 
 type JsonRpcSuccess<T> = {
   jsonrpc: "2.0";
@@ -116,13 +177,30 @@ export async function attachSponsoredPaymasterData(
         policyId,
         chainId: BNB_CHAIN_ID_HEX,
         entryPoint,
-        dummySignature: isHexString(userOp.signature)
-          ? userOp.signature
-          : DEFAULT_DUMMY_SIGNATURE,
+        dummySignature: getSimulationSignature(userOp.signature),
         userOperation: userOp,
       },
     ],
   };
+  const traceId = `${String(userOp.sender)}:${String(userOp.nonce)}`;
+  // #region debug-point E:paymaster-request
+  await reportDebugEvent(
+    "E",
+    "lib/server/alchemyPaymaster.ts:request",
+    "Sending paymaster request to Alchemy",
+    {
+      sender: userOp.sender,
+      nonce: userOp.nonce,
+      initCodeLen: ((userOp as Record<string, unknown>).initCode as string | undefined)?.length ?? 0,
+      callDataLen: userOp.callData?.length ?? 0,
+      signatureLen: userOp.signature?.length ?? 0,
+      usingDefaultDummySignature: !isHexString(userOp.signature) || userOp.signature === "0x",
+      dummySignatureLen: (payload.params[0].dummySignature as string).length,
+      entryPoint,
+    },
+    traceId
+  );
+  // #endregion
 
   const response = await fetch(rpcUrl, {
     method: "POST",
@@ -136,6 +214,21 @@ export async function attachSponsoredPaymasterData(
   const responseText = await response.text();
 
   if (!response.ok) {
+    // #region debug-point E:paymaster-http-error
+    await reportDebugEvent(
+      "E",
+      "lib/server/alchemyPaymaster.ts:http-error",
+      "Alchemy Gas Manager returned HTTP error",
+      {
+        sender: userOp.sender,
+        nonce: userOp.nonce,
+        status: response.status,
+        statusText: response.statusText,
+        responseText,
+      },
+      traceId
+    );
+    // #endregion
     throw new Error(
       `Alchemy Gas Manager HTTP ${response.status}: ${response.statusText} - ${responseText}`
     );
@@ -154,6 +247,21 @@ export async function attachSponsoredPaymasterData(
   }
 
   if ("error" in json) {
+    // #region debug-point E:paymaster-rpc-error
+    await reportDebugEvent(
+      "E",
+      "lib/server/alchemyPaymaster.ts:rpc-error",
+      "Alchemy Gas Manager returned RPC error",
+      {
+        sender: userOp.sender,
+        nonce: userOp.nonce,
+        code: json.error.code,
+        message: json.error.message,
+        data: json.error.data,
+      },
+      traceId
+    );
+    // #endregion
     throw new Error(
       `Alchemy Gas Manager RPC error ${json.error.code}: ${json.error.message}${
         json.error.data ? ` - ${JSON.stringify(json.error.data)}` : ""

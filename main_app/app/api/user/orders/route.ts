@@ -5,6 +5,7 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const walletAddress = searchParams.get('walletAddress')
+    const eoaAddress = searchParams.get('eoaAddress')
 
     if (!walletAddress) {
       return NextResponse.json(
@@ -13,9 +14,19 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Find user
-    const user = await prisma.user.findUnique({
-      where: { walletAddress: walletAddress.toLowerCase() }
+    // Find user by walletAddress, smartWalletAddress, or eoaAddress
+    const addresses = [walletAddress.toLowerCase()]
+    if (eoaAddress && eoaAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+      addresses.push(eoaAddress.toLowerCase())
+    }
+
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { walletAddress: { in: addresses } },
+          { smartWalletAddress: { in: addresses } }
+        ]
+      }
     })
 
     if (!user) {

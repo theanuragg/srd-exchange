@@ -21,15 +21,10 @@ import SellUPIModal from "./modal/sell-upi";
 import SellCDMModal from "./modal/sell-cdm";
 import BankDetailsModal, { BankDetailsData } from "./modal/bank-details-modal";
 import { useBankDetails } from "@/hooks/useBankDetails";
-import { parseAbi, parseUnits, formatUnits, type Address } from "viem";
-import { bsc } from "@particle-network/connectkit/chains";
+import { parseAbi, parseUnits, formatUnits, type Address, type Hex } from "viem";
 import { sendSponsoredContractWriteDetailed } from "@/lib/sponsoredTransactions";
+import { createSignHashWithRetry } from "@/lib/sponsoredSigning";
 import { retryWithRPCFailover } from "@/lib/rpcManager";
-
-import {
-  ConnectButton,
-  useSmartAccount,
-} from "@particle-network/connectkit";
 
 const CONTRACTS = {
   P2P_TRADING: {
@@ -78,7 +73,6 @@ export default function BuySellSection() {
   const [currentOrder, setCurrentOrder] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const smartAccount = useSmartAccount();
 
   const { saveModalState } = useModalState();
 
@@ -91,7 +85,7 @@ export default function BuySellSection() {
     usdtAmount: string,
     usdtDecimals: number
   ) => {
-    if (!address || !smartAccount) throw new Error("Smart account not connected");
+    if (!address || !smartWalletAddress) throw new Error("Smart account not connected");
 
     try {
       const parsedAmount = parseUnits(usdtAmount, usdtDecimals);
@@ -105,21 +99,19 @@ export default function BuySellSection() {
 
         // Pre-flight: check smart account's actual USDT balance
         try {
-            const accountInfo = await smartAccount.getAccount();
-            const smartAccountAddr = accountInfo.smartAccountAddress;
-            if (smartAccountAddr) {
+            if (smartWalletAddress) {
                 const balance = await retryWithRPCFailover(async (client) => {
                     return await client.readContract({
                         address: CONTRACTS.USDT[56],
                         abi: parseAbi(["function balanceOf(address owner) view returns (uint256)"]),
                         functionName: "balanceOf",
-                        args: [smartAccountAddr as Address],
+                        args: [smartWalletAddress as Address],
                     });
                 }) as bigint;
 
                 if (balance < parsedAmount) {
                     throw new Error(
-                        `Insufficient USDT balance in smart account. Required: ${usdtAmount} USDT, Available: ${formatUnits(balance, usdtDecimals)} USDT. This trade uses the smart account balance, not the EOA balance. Use the "Send" feature to deposit USDT to your smart account (${smartAccountAddr.slice(0, 10)}...).`
+                        `Insufficient USDT balance in smart account. Required: ${usdtAmount} USDT, Available: ${formatUnits(balance, usdtDecimals)} USDT. This trade uses the smart account balance, not the EOA balance. Use the "Send" feature to deposit USDT to your smart account (${smartWalletAddress.slice(0, 10)}...).`
                     );
                 }
                 console.log("✅ Smart account USDT balance sufficient:", {
@@ -134,14 +126,18 @@ export default function BuySellSection() {
             console.warn("⚠️ Could not verify smart account balance, proceeding:", checkError);
         }
 
+        console.log("🔧 Submitting sponsored transfer with atomic smart-account deployment if needed...");
+
         const result = await sendSponsoredContractWriteDetailed({
-          smartAccount,
-          chainId: bsc.id,
+          smartAccountAddress: smartWalletAddress as Address,
+          eoaAddress: eoaAddress as Address,
+          chainId: 56,
           address: CONTRACTS.USDT[56],
           abi: USDT_TRANSFER_ABI,
           functionName: "transfer",
           args: [recipientAddress as `0x${string}`, parsedAmount],
-        });
+          skipInitCode: shouldSkipInitCode,
+        }, createSignHashWithRetry(signHash));
 
       console.log("✅ Sponsored sell transfer submitted", result);
 
@@ -153,6 +149,12 @@ export default function BuySellSection() {
         // Pass through detailed pre-flight errors directly
         if (error.message?.includes("smart account")) {
             throw error;
+        }
+
+        if (error.message?.includes("content blocker") || error.message?.includes("signing service")) {
+            throw new Error(
+                "Unable to sign transaction. Please disable any ad blockers or content blockers for this site, then try again."
+            );
         }
 
         let userMessage = "Transaction failed: ";
@@ -178,6 +180,8 @@ export default function BuySellSection() {
     walletData,
     isLoading: walletLoading,
     refetchBalances,
+    signHash,
+    shouldSkipInitCode,
   } = useWalletManager();
 
   const {
@@ -458,7 +462,7 @@ export default function BuySellSection() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          chainId: bsc.id,
+          chainId: 56,
           walletAddress: smartWalletAddress ?? address,
           linkedEoaAddress: eoaAddress ?? address,
           orderType,
@@ -511,7 +515,7 @@ export default function BuySellSection() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              chainId: bsc.id,
+              chainId: 56,
               walletAddress: smartWalletAddress ?? address,
               linkedEoaAddress: eoaAddress ?? address,
               orderType,
@@ -1153,17 +1157,26 @@ export default function BuySellSection() {
                     transition={{ duration: 0.2 }}
                   />
                   <span
-                    className="pointer-events-none absolute right-3 top-1/2 max-w-[6rem] -translate-y-1/2 truncate text-right text-[0.65rem] font-medium leading-tight text-gray-400 sm:right-4 sm:max-w-none sm:text-xs"
+                    className={`pointer-events-none absolute right-3 max-w-[7rem] truncate text-right text-[0.65rem] font-medium leading-tight text-gray-400 sm:right-4 sm:max-w-none sm:text-xs ${activeTab === "sell" ? "top-1/4" : "top-1/2 -translate-y-1/2"}`}
                     title="Wallet USDT balance"
                   >
                     {walletLoading ? (
                       <span className="text-gray-500">…</span>
                     ) : displayUsdtBalance !== null ? (
-                      <>
-                        <button onClick={handleMaxClick} className="pointer-events-auto text-white/75">
-                         MAX
-                        </button>
-                      </>
+                      <span className={`${activeTab === "sell" ? "flex flex-col items-end gap-0.5" : "flex items-center gap-1"}`} title={`${displayUsdtBalance} USDT`}>
+                        <span className="text-white/60 max-w-[4rem] truncate sm:max-w-none">
+                          {activeTab === "buy" ? (
+                            <><span className="text-[#622DBF] font-semibold">USDT</span> {displayUsdtBalance}</>
+                          ) : (
+                            <>{displayUsdtBalance} <span className="text-[#622DBF] font-semibold">USDT</span></>
+                          )}
+                        </span>
+                        {activeTab === "sell" && (
+                          <button onClick={handleMaxClick} className="pointer-events-auto text-[#622DBF] font-bold hover:text-[#8B5CF6] leading-none">
+                           MAX
+                          </button>
+                        )}
+                      </span>
                     ) : (
                       <span className="text-gray-500">—</span>
                     )}

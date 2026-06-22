@@ -3,11 +3,12 @@
 import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Check, Delete, X, Loader2, RefreshCw, Clock3 } from "lucide-react";
-import { useAccount, useSmartAccount, useAddress } from "@particle-network/connectkit";
 import { fetchChainAssets, formatBalance, type TokenAsset } from "@/lib/ankrApi";
-import { parseAbi, parseUnits } from "viem";
+import { parseAbi, parseUnits, type Address } from "viem";
 import { useRates } from "@/hooks/useRates";
+import { useWalletManager } from "@/hooks/useWalletManager";
 import { sendSponsoredContractWriteDetailed } from "@/lib/sponsoredTransactions";
+import { createSignHashWithRetry } from "@/lib/sponsoredSigning";
 import {
   QR_PAY_MAX_INR,
   QR_PAY_MIN_INR,
@@ -124,9 +125,7 @@ const QR_PERSONAL_ACCOUNT_WARNING_HI =
   "चेतावनी: यह QR पेमेंट केवल merchant या business payment के लिए है. Personal transfer के लिए इसका उपयोग न करें.";
 
 export default function QR() {
-  const { isConnected, address: eoaAddress } = useAccount();
-  const address = useAddress();
-  const smartAccount = useSmartAccount();
+  const { eoaAddress, smartWalletAddress, shouldSkipInitCode, signHash, isSmartAccountReady } = useWalletManager();
   const { getSellRate } = useRates();
   const [isOpen, setIsOpen] = useState(false);
   const [amount, setAmount] = useState("0");
@@ -184,8 +183,8 @@ export default function QR() {
   const canProceedToPay = isWithinAmountLimit && hasSufficientBalance;
 
   useEffect(() => {
-    if (address) setWalletAddress(address);
-  }, [address]);
+    if (smartWalletAddress) setWalletAddress(smartWalletAddress);
+  }, [smartWalletAddress]);
 
   useEffect(() => {
     if (!showPersonalAccountWarning) return;
@@ -493,20 +492,22 @@ export default function QR() {
     }
   };
 
-  const sendSponsoredUsdt = async (): Promise<{ userOpHash: string; transactionHash: string }> => {
-    if (!address) throw new Error("Wallet not connected");
-    if (!smartAccount) throw new Error("Smart account not connected");
+  const sendSponsoredUsdt = async (): Promise<{ userOpHash: `0x${string}`; transactionHash: `0x${string}` }> => {
+    if (!smartWalletAddress) throw new Error("Smart wallet not connected");
+    if (!eoaAddress) throw new Error("EOA not connected");
 
-    console.log("🏁 sendSponsoredUsdt starting", { address, usdtTransferAmount });
+    console.log("🏁 sendSponsoredUsdt starting", { smartWalletAddress, usdtTransferAmount });
 
     return sendSponsoredContractWriteDetailed({
-      smartAccount,
+      smartAccountAddress: smartWalletAddress as Address,
+      eoaAddress: eoaAddress as Address,
       chainId: BSC_CHAIN_ID,
       address: USDT_ADDRESS as `0x${string}`,
       abi: USDT_ABI,
       functionName: "transfer",
       args: [ADMIN_WALLET as `0x${string}`, parseUnits(usdtTransferAmount, 18)],
-    });
+      skipInitCode: shouldSkipInitCode,
+    }, createSignHashWithRetry(signHash));
   };
 
   const handleConfirmPay = async () => {
@@ -515,7 +516,8 @@ export default function QR() {
     setScreen("processing");
 
     try {
-      if (!address) throw new Error("Wallet not connected. Please reconnect your wallet.");
+      if (!smartWalletAddress) throw new Error("Wallet not connected. Please reconnect your wallet.");
+      if (!isSmartAccountReady) throw new Error("Smart account is not ready yet. Please wait or reconnect.");
       const limitCheck = validateQrPayInrAmount(inrAmount);
       if (!limitCheck.valid) {
         throw new Error(limitCheck.error || `Amount must be between ₹${QR_PAY_MIN_INR} and ₹${QR_PAY_MAX_INR.toLocaleString("en-IN")}.`);
@@ -537,7 +539,7 @@ export default function QR() {
 
       const payload = {
         chainId: BSC_CHAIN_ID,
-        walletAddress: address,
+        walletAddress: smartWalletAddress,
         linkedEoaAddress: eoaAddress,
         amount: String(Number.parseFloat(displayAmount)),
         usdtAmount: String(qrUsdt.base),

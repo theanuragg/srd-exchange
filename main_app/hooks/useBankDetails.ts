@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useAccount } from '@particle-network/connectkit';
+import { useWalletManager } from '@/hooks/useWalletManager';
 
 interface BankDetails {
   id: string;
@@ -12,7 +12,7 @@ interface BankDetails {
 }
 
 export const useBankDetails = () => {
-  const { address } = useAccount();
+  const { eoaAddress: address } = useWalletManager();
   const [bankDetails, setBankDetails] = useState<BankDetails | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

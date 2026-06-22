@@ -3,19 +3,25 @@ import { prisma } from '@/lib/prisma'
 
 export async function POST(request: NextRequest) {
   try {
-    const { walletAddress, solanaAddress, role = 'USER' } = await request.json()
+    const { walletAddress, eoaAddress, smartWalletAddress, role = 'USER' } = await request.json()
 
-    if (!walletAddress) {
+    const primaryAddress = (eoaAddress || walletAddress)
+    const smartAddress = smartWalletAddress || (eoaAddress ? walletAddress : null)
+
+    if (!primaryAddress) {
       return NextResponse.json(
         { error: 'Wallet address is required' },
         { status: 400 }
       )
     }
 
-    // Check if user already exists
-    const existingUser = await prisma.user.findUnique({
+    // Check if user already exists (by either address)
+    const existingUser = await prisma.user.findFirst({
       where: {
-        walletAddress: walletAddress.toLowerCase()
+        OR: [
+          { walletAddress: primaryAddress.toLowerCase() },
+          ...(smartAddress ? [{ smartWalletAddress: smartAddress.toLowerCase() }] : [])
+        ]
       },
       include: { bankDetails: true }
     })
@@ -30,8 +36,8 @@ export async function POST(request: NextRequest) {
     // Create new user with profileCompleted set to false
     const user = await prisma.user.create({
       data: {
-        walletAddress: walletAddress.toLowerCase(),
-        solanaAddress: solanaAddress || null,
+        walletAddress: primaryAddress.toLowerCase(),
+        smartWalletAddress: smartAddress ? smartAddress.toLowerCase() : null,
         role: role === 'ADMIN' ? 'ADMIN' : 'USER',
         profileCompleted: false,
         lastLoginAt: new Date(),

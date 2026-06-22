@@ -9,7 +9,6 @@ import { useUserActivity } from "@/hooks/useUserActivity";
 import { useRates } from "@/hooks/useRates";
 import CancelOrderModal from "./modal/cancelOrder";
 import { useAdminContract } from "@/hooks/useAdminContract";
-import { usePublicClient } from "@particle-network/connectkit";
 import { formatUnits, parseUnits } from "viem";
 import { useWalletManager } from "@/hooks/useWalletManager";
 
@@ -180,7 +179,6 @@ export default function AdminCenter() {
   const [error, setError] = useState<string | null>(null);
 
   const { address, chainId } = useAdminSession();
-  const publicClient = usePublicClient();
   const { makeAdminRequest } = useAdminAPI();
   const isUserActive = useUserActivity(5000);
   const { getBuyRate, getSellRate } = useRates();

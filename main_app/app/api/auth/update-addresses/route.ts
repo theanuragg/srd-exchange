@@ -3,24 +3,20 @@ import { prisma } from '@/lib/prisma'
 
 export async function PATCH(request: NextRequest) {
   try {
-    const { walletAddress, smartWalletAddress, solanaAddress } = await request.json()
+    const { walletAddress, smartWalletAddress } = await request.json()
 
     if (!walletAddress) {
       return NextResponse.json({ error: 'Wallet address is required' }, { status: 400 })
     }
 
-    const data: Record<string, string> = {}
-    if (smartWalletAddress) data.smartWalletAddress = smartWalletAddress.toLowerCase()
-    if (solanaAddress) data.solanaAddress = solanaAddress
-
-    if (Object.keys(data).length === 0) {
+    if (!smartWalletAddress) {
       return NextResponse.json({ error: 'No addresses to update' }, { status: 400 })
     }
 
     const user = await prisma.user.update({
       where: { walletAddress: walletAddress.toLowerCase() },
-      data,
-      select: { id: true, walletAddress: true, smartWalletAddress: true, solanaAddress: true },
+      data: { smartWalletAddress: smartWalletAddress.toLowerCase() },
+      select: { id: true, walletAddress: true, smartWalletAddress: true },
     })
 
     return NextResponse.json({ success: true, user })

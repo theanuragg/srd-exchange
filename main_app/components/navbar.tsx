@@ -3,7 +3,9 @@
 import { useState, useEffect } from "react";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
-import { useAccount, useDisconnect, useModal } from "@particle-network/connectkit";
+import { useIsSignedIn, useSignOut } from '@coinbase/cdp-hooks';
+import { SignInModal, SignInModalContent } from '@coinbase/cdp-react';
+import { useWalletManager } from '@/hooks/useWalletManager';
 import { LogOut, User } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -12,9 +14,10 @@ export default function Navbar() {
   const [isMobile, setIsMobile] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
-  const { isConnected, address } = useAccount();
-  const { setOpen } = useModal(); // ConnectKit's modal
-  const { disconnect } = useDisconnect();
+  const [walletModalOpen, setWalletModalOpen] = useState(false);
+  const { isSignedIn } = useIsSignedIn();
+  const { address } = useWalletManager();
+  const { signOut } = useSignOut();
   const router = useRouter();
 
   useEffect(() => {
@@ -40,30 +43,25 @@ export default function Navbar() {
   };
 
   const handleConnectWallet = () => {
-    if (!isConnected) {
-      // Check if user has already accepted terms globally
+    if (!isSignedIn) {
       const hasAcceptedTerms = localStorage.getItem('terms_accepted_global');
       
       if (!hasAcceptedTerms) {
-        // Show terms modal first
         setShowTermsModal(true);
       } else {
-        // Directly open wallet connection
-        setOpen(true);
+        setWalletModalOpen(true);
       }
     }
   };
 
   const handleAcceptTerms = () => {
-    // Store global acceptance
     localStorage.setItem('terms_accepted_global', 'true');
     setShowTermsModal(false);
-    // Now open wallet connection modal
-    setOpen(true);
+    setWalletModalOpen(true);
   };
 
   const handleDisconnect = () => {
-    disconnect();
+    signOut();
     setShowUserMenu(false);
   };
 
@@ -310,6 +308,12 @@ export default function Navbar() {
           </>
         )}
       </AnimatePresence>
+
+      {/* Sign In Modal (controlled) */}
+      <SignInModal open={walletModalOpen} setIsOpen={setWalletModalOpen}>
+        <span />
+        <SignInModalContent />
+      </SignInModal>
 
       {/* Terms Agreement Modal */}
       <AnimatePresence>
