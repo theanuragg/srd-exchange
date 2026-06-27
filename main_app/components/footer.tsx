@@ -91,7 +91,7 @@ export default function Footer() {
               transition={{ duration: 0.5, delay: 0.8 }}
               viewport={{ once: true }}
             >
-              Copyright 2025 @ SRD Exchange
+              Copyright 2026 @ SRD Exchange
             </motion.div>
 
           </div>
@@ -163,7 +163,7 @@ export default function Footer() {
               transition={{ duration: 0.5, delay: 0.6 }}
               viewport={{ once: true }}
             >
-              Copyright 2025 @ SRD Exchange
+              Copyright 2026 @ SRD Exchange
             </motion.div>
 
           </motion.div>

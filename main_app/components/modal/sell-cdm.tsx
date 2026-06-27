@@ -407,7 +407,7 @@ export default function SellCDMModal({
               <div className="p-4 text-center">
                 <div className="mb-6">
                   <div className="text-4xl md:text-4xl font-bold text-white mb-2">
-                    {parseFloat(displayUsdtAmount).toFixed(4)} USDT
+                    {parseFloat(displayUsdtAmount).toFixed(4)}
                   </div>
 
                   <div className="text-2xl md:text-2xl font-medium text-green-400 mb-2">
@@ -415,7 +415,7 @@ export default function SellCDMModal({
                   </div>
 
                   <div className="text-xs text-gray-400 mb-2">
-                    Selling {parseFloat(displayUsdtAmount).toFixed(4)} USDT •
+                    Selling {parseFloat(displayUsdtAmount).toFixed(4)} •
                     Getting ₹{parseFloat(displayRupeeAmount).toFixed(2)} INR
                   </div>
 
@@ -487,7 +487,7 @@ export default function SellCDMModal({
                     </div>
                     <div className="text-xs text-gray-400">
                       {orderData.orderType} • Selling:{" "}
-                      {parseFloat(displayUsdtAmount).toFixed(4)} USDT →
+                      {parseFloat(displayUsdtAmount).toFixed(4)} →
                       Receiving: ₹{parseFloat(displayRupeeAmount).toFixed(2)}
                     </div>
                     <div className="text-xs text-gray-500 mt-1">
@@ -505,7 +505,7 @@ export default function SellCDMModal({
                     </div>
                     <div className="text-green-400 text-sm font-medium mt-1">
                       ✅ Payment confirmed!{" "}
-                      {parseFloat(displayUsdtAmount).toFixed(4)} USDT sent to
+                      {parseFloat(displayUsdtAmount).toFixed(4)} sent to
                       admin
                     </div>
                     <div className="text-gray-400 text-xs mt-1">

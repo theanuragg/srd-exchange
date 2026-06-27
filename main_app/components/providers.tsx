@@ -2,6 +2,14 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   CDPReactProvider,
+  SignIn,
+  SignInBackButton,
+  SignInImage,
+  SignInTitle,
+  SignInDescription,
+  SignInForm,
+  SignInAuthMethodButtons
+  // SignInFooter intentionally omitted to remove "Secured by Coinbase"
 } from '@coinbase/cdp-react';
 import FontProvider from './FontProvider';
 import { ReactNode } from 'react';
@@ -20,11 +28,9 @@ export default function Providers({ children }: { children: ReactNode }) {
     <CDPReactProvider
       config={{
         projectId: process.env.NEXT_PUBLIC_CDP_PROJECT_ID!,
-        appLogoUrl: 'https://srd.exchange/srd_final.svg',
         appName: 'SRD Exchange',
         ethereum: { createOnLogin: "smart" },
-        authMethods: ["sms","email",  "oauth:google", "oauth:telegram", "oauth:apple", "oauth:x", ],
-        showCoinbaseFooter: false,
+        authMethods: ["sms", "oauth:google", "oauth:telegram", "oauth:apple", "oauth:x"],
       }}
       theme={{
         "colors-bg-default": "#111111",
@@ -85,6 +91,22 @@ export default function Providers({ children }: { children: ReactNode }) {
         <SidebarProvider>
           <FontProvider />
           <div className="font-montserrat">
+            {/* Custom SignIn without the footer */}
+            <SignIn>
+              {(state) => (
+                <>
+                  <SignInBackButton />
+                  <SignInImage src="/srd_logo_no_bg.png" alt="SRD Exchange" />
+                  <SignInTitle />
+                  <SignInDescription />
+                  <SignInForm />
+                  {state.step === 'credentials' && (
+                    <SignInAuthMethodButtons activeMethod={state.authMethod} />
+                  )}
+                  {/* No <SignInFooter /> = no "Secured by Coinbase" */}
+                </>
+              )}
+            </SignIn>
             {children}
           </div>
         </SidebarProvider>

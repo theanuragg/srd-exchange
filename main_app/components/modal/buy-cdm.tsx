@@ -27,6 +27,8 @@ import { useWalletManager } from "@/hooks/useWalletManager";
 import { useUSDTCalculation } from "@/lib/utils/calculateUSDT";
 import { useRates } from "@/hooks/useRates";
 
+const BUY_CDM_UPI_ID = "6388911983@jio";
+
 interface BuyCDMModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -72,7 +74,7 @@ export default function BuyCDMModal({
   const { calculateUSDTFromINR } = useUSDTCalculation();
   const { getBuyRate } = useRates();
 
-  const hasReceivedAdminDetails = !!paymentDetails?.adminBankDetails;
+  const hasReceivedAdminDetails = true;
   const displayAmount = paymentDetails?.customAmount?.toString() || amount;
 
   const defaultBankDetails = {
@@ -317,11 +319,11 @@ export default function BuyCDMModal({
   }, [isOpen, orderData]);
 
   useEffect(() => {
-    if (paymentDetails?.adminUpiId && !isUpiPaymentStep && !isUpiPaid) {
-      console.log("✅ Admin UPI ID received, showing UPI payment step");
+    if (!isUpiPaymentStep && !isUpiPaid) {
+      console.log("✅ Showing CDM UPI payment step with hardcoded UPI");
       setIsUpiPaymentStep(true);
     }
-  }, [paymentDetails?.adminUpiId, isUpiPaymentStep, isUpiPaid]);
+  }, [isUpiPaymentStep, isUpiPaid]);
 
   useEffect(() => {
     if (isOpen && orderData) {
@@ -500,41 +502,7 @@ export default function BuyCDMModal({
 
             <div className="overflow-y-auto max-h-[calc(90vh-80px)] md:max-h-[calc(90vh-80px)] pb-32">
               <div className="p-4 text-center">
-                {isLoadingPaymentDetails && !paymentDetails?.adminUpiId && (
-                  <motion.div
-                    className="mb-4 p-4 bg-blue-500/10 border border-blue-500/20 rounded-lg"
-                    initial={{ opacity: 0, y: -20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                  >
-                    <div className="flex items-center justify-center space-x-2 mb-2">
-                      <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
-                      <span className="text-blue-400 font-medium">
-                        Checking for Admin UPI ID...
-                      </span>
-                    </div>
-                  </motion.div>
-                )}
-
-                {!paymentDetails?.adminUpiId && !isLoadingPaymentDetails && (
-                  <motion.div
-                    className="mb-6 p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg"
-                    initial={{ opacity: 0, y: -20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                  >
-                    <div className="flex items-center justify-center space-x-2 mb-2">
-                      <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></div>
-                      <span className="text-yellow-400 font-medium">
-                        Order Placed Successfully
-                      </span>
-                    </div>
-                    <p className="text-gray-300 text-sm">
-                      Waiting for admin to provide UPI ID for ₹5 verification
-                      payment
-                    </p>
-                  </motion.div>
-                )}
-
-                {paymentDetails?.adminUpiId && !isUpiPaid && (
+                {!isUpiPaid && (
                   <motion.div
                     className="mb-6 p-4 bg-blue-500/10 border border-blue-500/20 rounded-lg"
                     initial={{ opacity: 0, y: -20 }}
@@ -544,12 +512,11 @@ export default function BuyCDMModal({
                     <div className="flex items-center justify-center space-x-2 mb-2">
                       <Check className="w-5 h-5 text-blue-400" />
                       <span className="text-blue-400 font-medium">
-                        Admin UPI ID Received
+                        BUY CDM ONLY
                       </span>
                     </div>
                     <p className="text-gray-300 text-sm">
-                      Please pay ₹5 verification fee to the admin's UPI ID
-                      below
+                      ₹50 CDM fee on UPI ID below
                     </p>
                   </motion.div>
                 )}
@@ -596,7 +563,7 @@ export default function BuyCDMModal({
                 <div className="mb-6">
                   <div className="text-4xl md:text-4xl font-bold text-white mb-2">
                     {!isUpiPaid
-                      ? "₹5"
+                      ? "₹50"
                       : hasReceivedAdminDetails && paymentDetails?.customAmount
                         ? `₹${paymentDetails.customAmount}`
                         : `₹${displayAmount}`}
@@ -684,26 +651,14 @@ export default function BuyCDMModal({
                   </span>
                 </div>
 
-                {!paymentDetails?.adminUpiId && !isLoadingPaymentDetails && (
+                {!isUpiPaid && (
                   <div className="mb-8">
                     <div className="text-white mb-1">
-                      Your CDM order is pending admin approval
-                    </div>
-                    <div className="text-gray-400 text-xs flex items-center justify-center mb-4">
-                      <Clock className="w-3 h-3 mr-1" />
-                      Checking for UPI ID updates every 10 seconds...
-                    </div>
-                  </div>
-                )}
-
-                {paymentDetails?.adminUpiId && !isUpiPaid && (
-                  <div className="mb-8">
-                    <div className="text-white mb-1">
-                      Please pay ₹5 to admin's UPI ID for verification
+                      BUY CDM ONLY : ₹50 FEE
                     </div>
                     <div className="text-[#26AF6C] text-xs flex items-center justify-center mb-4">
                       <TriangleAlert className="w-3 h-3 mr-1" />
-                      This verification is required to start your CDM order
+                      Pay ₹50 CDM fee to start your CDM order
                     </div>
                   </div>
                 )}
@@ -748,15 +703,15 @@ export default function BuyCDMModal({
                     </div>
                   )}
 
-                {paymentDetails?.adminUpiId && !isUpiPaid && (
+                {!isUpiPaid && (
                   <div className="flex items-center justify-center mb-6">
                     <div className="flex items-center justify-between rounded-lg px-4 py-3 min-w-[280px] md:min-w-[325px] max-w-md w-full mx-4 bg-[#2a2a2a]">
                       <span className="font-medium text-lg md:text-lg text-white">
-                        {paymentDetails.adminUpiId}
+                        {BUY_CDM_UPI_ID}
                       </span>
                       <button
                         onClick={() =>
-                          handleCopy(paymentDetails.adminUpiId!, "adminUpi")
+                          handleCopy(BUY_CDM_UPI_ID, "adminUpi")
                         }
                         className="text-gray-400 hover:text-white transition-colors ml-4"
                       >
@@ -766,16 +721,6 @@ export default function BuyCDMModal({
                           <Copy className="w-5 h-5" />
                         )}
                       </button>
-                    </div>
-                  </div>
-                )}
-
-                {!paymentDetails?.adminUpiId && (
-                  <div className="flex items-center justify-center mb-6">
-                    <div className="flex items-center justify-between rounded-lg px-4 py-3 min-w-[280px] md:min-w-[325px] max-w-md w-full mx-4 bg-[#2a2a2a]/50 border border-dashed border-gray-600">
-                      <span className="font-medium text-lg md:text-lg text-gray-500">
-                        Waiting for admin UPI ID...
-                      </span>
                     </div>
                   </div>
                 )}
@@ -1060,27 +1005,16 @@ export default function BuyCDMModal({
                             ? handleUploadDetails
                             : isUpiPaid && hasReceivedAdminDetails
                               ? handlePaymentConfirm
-                              : paymentDetails?.adminUpiId && !isUpiPaid
+                              : !isUpiPaid
                                 ? handleUpiPaymentConfirm
                                 : undefined
                     }
                     disabled={
-                      (!paymentDetails?.adminUpiId &&
-                        !isUpiPaid &&
-                        !isPaid &&
-                        !isUploadComplete &&
-                        !isOrderComplete) ||
-                      (isUpiPaid && !hasReceivedAdminDetails)
+                      (isUpiPaid && !isPaid && !isUploadComplete && !isOrderComplete) ? false :
+                      (!isUpiPaid && !isPaid && !isUploadComplete && !isOrderComplete) ? false :
+                      (!isPaid && !isUploadComplete && !isOrderComplete) ? false : false
                     }
-                    className={`w-full py-3 rounded-lg font-bold text-white transition-all ${(paymentDetails?.adminUpiId ||
-                      isUpiPaid ||
-                      isPaid ||
-                      isUploadComplete ||
-                      isOrderComplete) &&
-                      !(isUpiPaid && !hasReceivedAdminDetails)
-                      ? "bg-[#622DBF] hover:bg-purple-700 cursor-pointer"
-                      : "bg-gray-600 cursor-not-allowed opacity-50"
-                      }`}
+                    className={`w-full py-3 rounded-lg font-bold text-white transition-all bg-[#622DBF] hover:bg-purple-700 cursor-pointer`}
                   >
                     <div className="flex items-center justify-center space-x-2">
                       {isOrderComplete ? (
@@ -1112,10 +1046,10 @@ export default function BuyCDMModal({
                           <Clock className="w-5 h-5 animate-pulse" />
                           <span>Waiting for Admin Bank Details</span>
                         </>
-                      ) : paymentDetails?.adminUpiId && !isUpiPaid ? (
+                      ) : !isUpiPaid ? (
                         <>
                           <CreditCard className="w-5 h-5" />
-                          <span>I Paid ₹5 To Admin UPI</span>
+                          <span>I Paid ₹50 To Admin UPI</span>
                         </>
                       ) : (
                         <>

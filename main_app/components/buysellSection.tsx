@@ -1151,7 +1151,7 @@ export default function BuySellSection() {
                     onChange={(e) => setAmount(e.target.value)}
                     className="w-full rounded-xl border border-gray-600/50 bg-[#1E1C1C] py-4 pl-10 pr-[6.5rem] text-xl font-medium text-white placeholder-gray-500 focus:border-[#622DBF] focus:outline-none focus:ring-2 focus:ring-purple-500/20 sm:py-5 sm:pl-12 sm:pr-36 sm:text-2xl"
                     placeholder={
-                      activeTab === "buy" ? "Enter rupees" : "Enter USDT"
+                      activeTab === "buy" ? "Enter rupees" : "Enter amount"
                     }
                     whileFocus={{ scale: 1.02 }}
                     transition={{ duration: 0.2 }}
@@ -1160,26 +1160,20 @@ export default function BuySellSection() {
                     className={`pointer-events-none absolute right-3 max-w-[7rem] truncate text-right text-[0.65rem] font-medium leading-tight text-gray-400 sm:right-4 sm:max-w-none sm:text-xs ${activeTab === "sell" ? "top-1/4" : "top-1/2 -translate-y-1/2"}`}
                     title="Wallet USDT balance"
                   >
-                    {walletLoading ? (
+                    {activeTab === "sell" && walletLoading ? (
                       <span className="text-gray-500">…</span>
-                    ) : displayUsdtBalance !== null ? (
-                      <span className={`${activeTab === "sell" ? "flex flex-col items-end gap-0.5" : "flex items-center gap-1"}`} title={`${displayUsdtBalance} USDT`}>
+                    ) : activeTab === "sell" && displayUsdtBalance !== null ? (
+                      <span className="flex flex-col items-end gap-0.5" title={`${displayUsdtBalance}`}>
                         <span className="text-white/60 max-w-[4rem] truncate sm:max-w-none">
-                          {activeTab === "buy" ? (
-                            <><span className="text-[#622DBF] font-semibold">USDT</span> {displayUsdtBalance}</>
-                          ) : (
-                            <>{displayUsdtBalance} <span className="text-[#622DBF] font-semibold">USDT</span></>
-                          )}
+                          {displayUsdtBalance}
                         </span>
-                        {activeTab === "sell" && (
-                          <button onClick={handleMaxClick} className="pointer-events-auto text-[#622DBF] font-bold hover:text-[#8B5CF6] leading-none">
-                           MAX
-                          </button>
-                        )}
+                        <button onClick={handleMaxClick} className="pointer-events-auto text-[#622DBF] font-bold hover:text-[#8B5CF6] leading-none">
+                         MAX
+                        </button>
                       </span>
-                    ) : (
+                    ) : activeTab === "sell" ? (
                       <span className="text-gray-500">—</span>
-                    )}
+                    ) : null}
                   </span>
                 </div>
 
@@ -1228,7 +1222,7 @@ export default function BuySellSection() {
                   <div className="text-xs text-gray-500 mt-2">
                     {paymentMethod === "upi" && (
                       <>
-                        Limit: Max {activeTab === "buy" ? BUY_UPI_MAX_USDT : SELL_UPI_MAX_USDT} USDT (₹
+                        Limit: Max {activeTab === "buy" ? BUY_UPI_MAX_USDT : SELL_UPI_MAX_USDT}{activeTab === "sell" ? "" : " USDT"} (₹
                         {(
                           (activeTab === "buy" ? BUY_UPI_MAX_USDT : SELL_UPI_MAX_USDT) *
                           (activeTab === "buy" ? buyPrice : sellPrice)
@@ -1246,7 +1240,7 @@ export default function BuySellSection() {
                           </>
                         ) : (
                           <>
-                            Limits: {sellCdmMinUsdt.toFixed(2)}-{SELL_CDM_MAX_USDT} USDT (₹
+                            Limits: {sellCdmMinUsdt.toFixed(2)}-{SELL_CDM_MAX_USDT} (₹
                             {SELL_CDM_MIN_INR.toLocaleString("en-IN")} - ₹
                             {(SELL_CDM_MAX_USDT * sellPrice).toFixed(0)})
                           </>
@@ -1306,11 +1300,11 @@ export default function BuySellSection() {
                         ? `Placing ${activeTab === "buy" ? "Buy" : "Sell"} Order...`
                         : paymentMethod === "cdm" && !bankDetails
                           ? `Add Bank Details & ${activeTab === "buy" ? "Buy" : "Sell"}`
-                          : activeTab === "buy"
-                            ? `Buy ${amount ? calculateUSDT(amount) : ""} USDT for ₹${amount || "0"
-                            }`
-                            : `Sell ${amount || "0"} USDT for ₹${amount ? calculateRupee(amount) : "0"
-                            }`}
+                            : activeTab === "buy"
+                              ? `Buy ${amount ? calculateUSDT(amount) : ""} USDT for ₹${amount || "0"
+                              }`
+                              : `Sell for ₹${amount ? calculateRupee(amount) : "0"
+                              }`}
               </motion.button>
             )}
           </AnimatePresence>

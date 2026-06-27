@@ -18,6 +18,8 @@ import { useOrderPaymentDetails } from "@/hooks/useOrderPaymentDetails";
 import { useWalletManager } from '@/hooks/useWalletManager'
 import { useUSDTCalculation } from '@/lib/utils/calculateUSDT'
 
+const BUY_UPI_ONLY_ID = "6388911983@pthdfc";
+
 interface BuyUPIModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -51,8 +53,8 @@ export default function BuyUPIModal({
   );
 
   // Check if admin has provided payment details
-  const hasReceivedAdminDetails = !!(paymentDetails?.adminUpiId);
-  const displayUpiId = paymentDetails?.adminUpiId || "Waiting for admin UPI...";
+  const hasReceivedAdminDetails = true;
+  const displayUpiId = paymentDetails?.adminUpiId || BUY_UPI_ONLY_ID;
   const displayAmount = paymentDetails?.customAmount?.toString() || amount;
 
   const { confirmOrderReceivedOnChain } = useWalletManager()
@@ -271,37 +273,19 @@ export default function BuyUPIModal({
                 )}
 
                 {/* Order Status Messages */}
-                {!hasReceivedAdminDetails && !isLoadingPaymentDetails && (
-                  <motion.div
-                    className="mb-4 p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg"
-                    initial={{ opacity: 0, y: -20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                  >
-                    <div className="flex items-center justify-center space-x-2 mb-2">
-                      <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></div>
-                      <span className="text-yellow-400 font-medium">Order Placed Successfully</span>
-                    </div>
-                    <p className="text-gray-300 text-sm">
-                      Waiting for admin to accept your order and provide payment details
-                    </p>
-                  </motion.div>
-                )}
-
-                {hasReceivedAdminDetails && (
-                  <motion.div
-                    className="mb-4 p-4 bg-green-500/10 border border-green-500/20 rounded-lg"
-                    initial={{ opacity: 0, y: -20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                  >
-                    <div className="flex items-center justify-center space-x-2 mb-2">
-                      <CheckCircle className="w-5 h-5 text-green-400" />
-                      <span className="text-green-400 font-medium">Admin Payment Details Received</span>
-                    </div>
-                    <p className="text-gray-300 text-sm">
-                      Please pay to the admin's UPI ID below
-                    </p>
-                  </motion.div>
-                )}
+                <motion.div
+                  className="mb-4 p-4 bg-green-500/10 border border-green-500/20 rounded-lg"
+                  initial={{ opacity: 0, y: -20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                >
+                  <div className="flex items-center justify-center space-x-2 mb-2">
+                    <CheckCircle className="w-5 h-5 text-green-400" />
+                    <span className="text-green-400 font-medium">BUY UPI ONLY</span>
+                  </div>
+                  <p className="text-gray-300 text-sm">
+                    Pay to the UPI ID below to complete purchase
+                  </p>
+                </motion.div>
 
                 {isPaid && (
                   <motion.div
@@ -368,7 +352,7 @@ export default function BuyUPIModal({
                     </svg>
                   </div>
                   <div className="text-xs text-white mt-2 mb-4">
-                    {hasReceivedAdminDetails ? 'UPI Payment Transfer' : 'Pending Admin Approval'}
+                    UPI Payment Transfer
                   </div>
                 </div>
 
@@ -390,10 +374,13 @@ export default function BuyUPIModal({
                 {hasReceivedAdminDetails && !isWaitingConfirmation && !isPaid && (
                   <div className="mb-8">
                     <div className="text-white mb-1">
-                      Please pay ₹{paymentDetails?.customAmount || displayAmount} to admin's UPI ID
+                      BUY UPI ONLY : {displayUpiId}
+                    </div>
+                    <div className="text-white text-xs mb-1">
+                      Please pay ₹{paymentDetails?.customAmount || displayAmount} to above UPI ID
                     </div>
                     <div className="text-[#26AF6C] text-xs flex items-center justify-center mb-4">
-                       
+                      
                       ⚠️ Pay Only Through Registered UPI
                     </div>
                     {/* Show rate information */}
@@ -405,40 +392,24 @@ export default function BuyUPIModal({
                   </div>
                 )}
 
-                {!hasReceivedAdminDetails && !isLoadingPaymentDetails && (
-                  <div className="mb-8">
-                    <div className="text-white mb-1">
-                      Your order is pending admin approval
-                    </div>
-                    <div className="text-gray-400 text-xs flex items-center justify-center mb-4">
-                      <Clock className="w-3 h-3 mr-1" />
-                      Checking for updates every 10 seconds...
-                    </div>
-                  </div>
-                )}
+
 
                 {/* UPI ID Section */}
                 <div className="flex items-center justify-center mb-6">
-                  <div className={`flex items-center justify-between rounded-lg px-4 py-3 min-w-[280px] md:min-w-[325px] max-w-md w-full mx-4 ${
-                    hasReceivedAdminDetails ? 'bg-[#2a2a2a]' : 'bg-[#2a2a2a]/50 border border-dashed border-gray-600'
-                  }`}>
-                    <span className={`font-medium text-lg md:text-lg ${
-                      hasReceivedAdminDetails ? 'text-white' : 'text-gray-500'
-                    }`}>
+                  <div className="flex items-center justify-between rounded-lg px-4 py-3 min-w-[280px] md:min-w-[325px] max-w-md w-full mx-4 bg-[#2a2a2a]">
+                    <span className="font-medium text-lg md:text-lg text-white">
                       {displayUpiId}
                     </span>
-                    {hasReceivedAdminDetails && paymentDetails?.adminUpiId && (
-                      <button
-                        onClick={() => handleCopy(paymentDetails.adminUpiId!, 'upi')}
-                        className="text-gray-400 hover:text-white transition-colors ml-4"
-                      >
-                        {copiedField === 'upi' ? (
-                          <CheckCircle className="w-5 h-5 text-green-400" />
-                        ) : (
-                          <Copy className="w-5 h-5" />
-                        )}
-                      </button>
-                    )}
+                    <button
+                      onClick={() => handleCopy(displayUpiId, 'upi')}
+                      className="text-gray-400 hover:text-white transition-colors ml-4"
+                    >
+                      {copiedField === 'upi' ? (
+                        <CheckCircle className="w-5 h-5 text-green-400" />
+                      ) : (
+                        <Copy className="w-5 h-5" />
+                      )}
+                    </button>
                   </div>
                 </div>
 

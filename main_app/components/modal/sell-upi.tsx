@@ -288,7 +288,7 @@ export default function SellUPIModal({
               <div className="p-4 text-center">
                 <div className="mb-6">
                   <div className="text-4xl md:text-4xl font-bold text-white mb-2">
-                    {parseFloat(displayUsdtAmount || '0').toFixed(4)} USDT
+                    {parseFloat(displayUsdtAmount || '0').toFixed(4)}
                   </div>
 
                   <div className="text-2xl md:text-2xl font-medium text-green-400 mb-2">
@@ -296,7 +296,7 @@ export default function SellUPIModal({
                   </div>
 
                   <div className="text-xs text-gray-400 mb-2">
-                    Selling {parseFloat(displayUsdtAmount || '0').toFixed(4)} USDT • Getting ₹{parseFloat(displayRupeeAmount || '0').toFixed(2)} INR
+                    Selling {parseFloat(displayUsdtAmount || '0').toFixed(4)} • Getting ₹{parseFloat(displayRupeeAmount || '0').toFixed(2)} INR
                   </div>
 
                   {/* Rate Display - Show current API rate with safe formatting */}
@@ -350,7 +350,7 @@ export default function SellUPIModal({
                       Order Status: {orderData.status || 'PENDING'}
                     </div>
                     <div className="text-xs text-gray-400">
-                      {orderData.orderType} • Selling: {parseFloat(displayUsdtAmount || '0').toFixed(4)} USDT → Receiving: ₹{parseFloat(displayRupeeAmount || '0').toFixed(2)}
+                      {orderData.orderType} • Selling: {parseFloat(displayUsdtAmount || '0').toFixed(4)} → Receiving: ₹{parseFloat(displayRupeeAmount || '0').toFixed(2)}
                     </div>
                     <div className="text-xs text-gray-500 mt-1">
                       Payment Method: {paymentMethod} • Rate: ₹{currentRate.toFixed(2)}/USDT
@@ -364,7 +364,7 @@ export default function SellUPIModal({
                       <div className="bg-green-500 h-2 rounded-full w-full"></div>
                     </div>
                     <div className="text-green-400 text-sm font-medium mt-1">
-                      ✅ Payment confirmed! {parseFloat(displayUsdtAmount || '0').toFixed(4)} USDT sent to admin
+                      ✅ Payment confirmed! {parseFloat(displayUsdtAmount || '0').toFixed(4)} sent to admin
                     </div>
                     <div className="text-gray-400 text-xs mt-1">
                       You received ₹{parseFloat(displayRupeeAmount || '0').toFixed(2)} via {paymentMethod}

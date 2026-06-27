@@ -743,11 +743,18 @@ export default function QR() {
                   </div>
                 )}
 
-                <div className="mb-3 flex shrink-0 items-center gap-2 rounded-[0.2rem] border border-white/5 bg-[#171717] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:mb-4 sm:px-4 sm:py-3">
-                  <AlertCircle className="h-5 w-5 shrink-0 fill-[#f14336] text-black sm:h-6 sm:w-6" />
-                  <p className="text-[0.72rem] leading-5 text-white/80 sm:text-[0.78rem]">
-                    Please only Ask Bill/payable Amount, Don&apos;t ask QR!
-                  </p>
+                <div className="flex items-center justify-between gap-2 mb-3 sm:mb-4">
+                  <div className="flex shrink-0 items-center gap-2 rounded-[0.2rem] border border-white/5 bg-[#171717] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] sm:px-4 sm:py-3">
+                    <AlertCircle className="h-5 w-5 shrink-0 fill-[#f14336] text-black sm:h-6 sm:w-6" />
+                    <p className="text-[0.72rem] leading-5 text-white/80 sm:text-[0.78rem]">
+                      Please only Ask Bill/payable Amount, Don&apos;t ask QR!
+                    </p>
+                  </div>
+                  <div className="shrink-0 rounded-[0.2rem] border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 sm:px-4 sm:py-3">
+                    <p className="text-[0.72rem] font-semibold leading-5 text-amber-300 sm:text-[0.78rem]">
+                      Min ₹10
+                    </p>
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -868,42 +875,47 @@ export default function QR() {
               <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-[radial-gradient(circle_at_50%_22%,rgba(166,255,121,0.11)_0%,rgba(22,22,26,0.22)_24%,rgba(0,0,0,0)_54%)] pb-[max(5.5rem,calc(env(safe-area-inset-bottom)+4.5rem))] sm:pb-4">
                 <div className="flex flex-1 flex-col">
                   <div className="flex flex-col items-center px-6 pb-6 pt-8">
-                    <div className="relative flex h-[126px] w-[126px] items-center justify-center rounded-full border-[4px] border-[#b7ff8e] shadow-[0_0_24px_rgba(183,255,142,0.18)]">
-                      <Check className="h-16 w-16 stroke-[4] text-[#d8ffbc]" />
+                    <div className="relative flex h-[110px] w-[110px] items-center justify-center rounded-full bg-[#b7ff8e]/10 border-[3px] border-[#b7ff8e]/40 shadow-[0_0_30px_rgba(183,255,142,0.12)]">
+                      <Check className="h-14 w-14 stroke-[3] text-[#b7ff8e]" />
                     </div>
-                    <h3 className="pt-6 text-[1.2rem] font-medium tracking-[-0.03em] text-white/95">Payment Completed</h3>
+                    <h3 className="pt-5 text-[1.3rem] font-semibold tracking-[-0.02em] text-white">Payment Completed</h3>
+                    <p className="pt-1 text-[0.82rem] text-white/50">Transaction successful</p>
                   </div>
-                  <div className="mx-4 rounded-[0.2rem] border-x border-t border-white/7 bg-[#121216]/90 px-4 py-3 text-center">
-                    <p className="text-[1.12rem] font-medium tracking-[-0.03em] text-[#b7e88f]">₹ {Number.parseFloat(displayAmount || "0").toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-                    <p className="pt-1 text-[0.9rem] font-medium text-white/70">
-                      = {usdtTotalAmount} USDT sent ({usdtBaseAmount} + {NETWORK_FEE_USDT.toFixed(2)} fee)
-                    </p>
-                    <p className="pt-2 text-xs text-white/50">Merchant: {transactionData?.scannedUpiId || scannedUpiId}</p>
+                  <div className="mx-5 rounded-xl border border-white/8 bg-[#121216]/95 px-5 py-4 text-center shadow-sm">
+                    <p className="text-[1.4rem] font-bold tracking-[-0.02em] text-[#b7e88f]">₹ {Number.parseFloat(displayAmount || "0").toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    <div className="mt-2 flex items-center justify-center gap-1.5 text-[0.82rem] text-white/60">
+                      <span>{usdtTotalAmount} USDT</span>
+                      <span className="text-white/20">•</span>
+                      <span className="text-white/40">{usdtBaseAmount} + {NETWORK_FEE_USDT.toFixed(2)} fee</span>
+                    </div>
+                    {transactionData?.scannedUpiId || scannedUpiId ? (
+                      <p className="mt-2 text-xs text-white/40">Merchant: {transactionData?.scannedUpiId || scannedUpiId}</p>
+                    ) : null}
                   </div>
-                  <div className="min-h-[100px] flex-1" />
+                  <div className="min-h-[80px] flex-1" />
                 </div>
-                <div className="px-4 pb-8 pt-4">
-                  <div className="mb-5 flex items-start gap-2.5 rounded-[0.2rem] bg-[#121216]/92 px-4 py-3 text-white/72">
+                <div className="px-5 pb-8 pt-3">
+                  <div className="mb-4 flex items-start gap-2.5 rounded-xl bg-[#121216]/90 px-4 py-3.5 text-white/70 border border-white/5">
                     <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 fill-[#f14336] text-black" />
                     <p className="text-[0.82rem] font-medium leading-5">
-                      Ask merchant to give payment screenshot in group, if needed?
+                      Ask merchant to share payment screenshot in group, if needed
                     </p>
                   </div>
                   <div className="space-y-3">
                     <button
                       type="button"
                       onClick={handleTelegramClick}
-                      className="flex h-14 w-full items-center justify-center gap-3 rounded-[1.8rem] bg-[linear-gradient(90deg,#7c5bdf_0%,#5e2db3_48%,#38116e_100%)] px-5 text-[0.96rem] font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16),0_10px_24px_rgba(67,24,145,0.36)] hover:brightness-110"
+                      className="flex h-13 w-full items-center justify-center gap-3 rounded-[1.2rem] bg-[linear-gradient(90deg,#7c5bdf_0%,#5e2db3_48%,#38116e_100%)] px-5 text-[0.96rem] font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16),0_10px_24px_rgba(67,24,145,0.36)] hover:brightness-110"
                     >
-                      <Image src="/telegram.svg" alt="" width={26} height={26} className="h-7 w-7" />
+                      <Image src="/telegram.svg" alt="" width={24} height={24} className="h-6 w-6" />
                       <span>Ask Screenshot in Group</span>
                     </button>
                     <button
                       type="button"
                       onClick={handleClose}
-                      className="h-14 w-full rounded-[1.8rem] bg-[linear-gradient(90deg,#7c5bdf_0%,#5e2db3_48%,#38116e_100%)] text-[1rem] font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16),0_10px_24px_rgba(67,24,145,0.36)] hover:brightness-110"
+                      className="h-13 w-full rounded-[1.2rem] bg-white/5 border border-white/10 text-[1rem] font-semibold text-white hover:bg-white/10"
                     >
-                      Back
+                      Close
                     </button>
                   </div>
                 </div>

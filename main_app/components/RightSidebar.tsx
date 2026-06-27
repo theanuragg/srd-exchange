@@ -304,13 +304,6 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
                                 {showWalletDropdown && (
                                     <div className="absolute top-full mt-1 right-0 bg-[#111] border border-white/10 rounded-xl overflow-hidden z-50 shadow-xl min-w-[160px]">
                                         <button
-                                            onClick={() => { copyToClipboard(displayAddress); setShowWalletDropdown(false) }}
-                                            className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 transition-colors text-left"
-                                        >
-                                            <Copy className="w-4 h-4 text-white/60" />
-                                            <span className="text-white text-sm">Copy Address</span>
-                                        </button>
-                                        <button
                                             onClick={() => { handleLogout(); setShowWalletDropdown(false) }}
                                             className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 transition-colors text-left"
                                         >
