@@ -24,10 +24,9 @@ import { useRouter } from 'next/navigation'
 import { useWalletManager } from '@/hooks/useWalletManager'
 import { useChainAssets } from '@/hooks/useChainAssets'
 import { formatBalance, formatUsd, type TokenAsset } from '@/lib/ankrApi'
-import { CHAIN_CONFIGS, getChainById, isBNB, isSolana, type ChainId } from '@/lib/chainConfig'
+import { CHAIN_CONFIGS, getChainById, isBNB, isEvmChain, isSolana, type ChainId } from '@/lib/chainConfig'
 import { sendSponsoredContractWrite, sendSponsoredSmartAccountTransaction } from '@/lib/sponsoredTransactions'
 import { createSignHashWithRetry } from '@/lib/sponsoredSigning'
-import { broadcastRawTx } from '@/lib/userOpBuilder'
 
 interface RightSidebarProps {
     isOpen: boolean
@@ -223,7 +222,17 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
             transaction: tx,
         });
 
-        return broadcastRawTx(signedTransaction, chainId);
+        const broadcastRes = await fetch(rpcUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jsonrpc: '2.0', id: 1, method: 'eth_sendRawTransaction',
+                params: [signedTransaction],
+            }),
+        });
+        const broadcastData = await broadcastRes.json();
+        if (broadcastData.error) throw new Error(`Avalanche broadcast error: ${broadcastData.error.message}`);
+        return broadcastData.result as string;
     }
 
     const sendSolanaEoaToken = async (
@@ -305,18 +314,15 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
         setIsSending(true)
 
         try {
-<<<<<<< HEAD
-            const hash = await sendEVMNormalToken(selectedAsset!, sendAmount, recipientAddress)
-=======
             let hash: string;
             if (selectedChain === 'solana') {
                 hash = await sendSolanaEoaToken(selectedAsset!, sendAmount, recipientAddress);
             } else if (selectedChain === 43114) {
                 hash = await sendAvalancheEoaToken(selectedAsset!, sendAmount, recipientAddress);
             } else {
-                hash = await sendEVMNormalToken(selectedAsset!, sendAmount, recipientAddress, selectedChain as number);
+                hash = await sendEVMNormalToken(selectedAsset!, sendAmount, recipientAddress);
             }
->>>>>>> ea68f4c (add)
+
             setTxHash(hash)
             setSendAmount('')
             setRecipientAddress('')
@@ -824,13 +830,7 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
                                             </div>
                                             Receive
                                         </button>
-<<<<<<< HEAD
-
-                                        {isEvmChain(selectedChain) && selectedChain !== 43114 ? (
-
-=======
                                         {isEvmChain(selectedChain) || selectedChain === 'solana' ? (
->>>>>>> ea68f4c (add)
                                             <button
                                                 onClick={() => setCurrentView('Send')}
                                                 className="flex items-center justify-center gap-2 bg-[#6320EE] hover:bg-[#5219d1] text-white py-4 rounded-xl font-bold text-lg transition-all active:scale-95"
