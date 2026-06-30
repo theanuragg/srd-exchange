@@ -18,8 +18,8 @@ import {
 import { FC, useState, useEffect, useRef } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import Image from 'next/image'
-import { useIsSignedIn, useSignOut, useSignEvmHash, useSolanaAddress } from '@coinbase/cdp-hooks'
-import { parseUnits, erc20Abi, isAddress } from 'viem'
+import { useIsSignedIn, useSignOut, useSignEvmHash, useSolanaAddress, useSignEvmTransaction, useSendSolanaTransaction } from '@coinbase/cdp-hooks'
+import { parseUnits, erc20Abi, isAddress, encodeFunctionData } from 'viem'
 import { useRouter } from 'next/navigation'
 import { useWalletManager } from '@/hooks/useWalletManager'
 import { useChainAssets } from '@/hooks/useChainAssets'
@@ -27,6 +27,7 @@ import { formatBalance, formatUsd, type TokenAsset } from '@/lib/ankrApi'
 import { CHAIN_CONFIGS, getChainById, isBNB, isSolana, type ChainId } from '@/lib/chainConfig'
 import { sendSponsoredContractWrite, sendSponsoredSmartAccountTransaction } from '@/lib/sponsoredTransactions'
 import { createSignHashWithRetry } from '@/lib/sponsoredSigning'
+import { broadcastRawTx } from '@/lib/userOpBuilder'
 
 interface RightSidebarProps {
     isOpen: boolean
@@ -71,6 +72,9 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
         switchChain,
     } = useWalletManager()
 
+    const { signEvmTransaction } = useSignEvmTransaction()
+    const { sendSolanaTransaction } = useSendSolanaTransaction()
+
     const chainDropdownRef = useRef<HTMLDivElement>(null)
     const walletDropdownRef = useRef<HTMLDivElement>(null)
 
@@ -88,9 +92,12 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
     }, [])
 
     const chainConfig = getChainById(selectedChain) ?? CHAIN_CONFIGS[0]
+    const isAvalanche = selectedChain === 43114
     const assetsAddress = selectedChain === 'solana'
         ? solanaAddress
-        : smartWalletAddress
+        : isAvalanche
+            ? eoaAddress
+            : smartWalletAddress
     const displayAddress = selectedAddress ?? address ?? ''
 
     const { assets, totalUsd, isLoading: assetsLoading, error: assetsError, refetch: refetchAssets } = useChainAssets(
@@ -149,6 +156,148 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
         } as any, signHashWithRetry)
     }
 
+    const sendAvalancheEoaToken = async (
+        asset: TokenAsset,
+        amount: string,
+        recipient: string,
+    ): Promise<string> => {
+        if (!isAddress(recipient)) throw new Error('Invalid recipient address');
+        const amountNum = parseFloat(amount);
+        if (isNaN(amountNum) || amountNum <= 0) throw new Error('Enter a valid amount');
+        if (!eoaAddress) throw new Error('EOA address not available. Please sign in again.');
+
+        const chainId = 43114;
+        const rpcUrl = `https://avax-mainnet.g.alchemy.com/v2/${process.env.NEXT_PUBLIC_ALCHEMY_API_KEY}`;
+
+        const rpcCall = async (method: string, params: any[]) => {
+            const res = await fetch(rpcUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+            });
+            const data = await res.json();
+            if (data.error) throw new Error(`Avalanche RPC error: ${data.error.message}`);
+            return data.result;
+        };
+
+        const nonceHex = await rpcCall('eth_getTransactionCount', [eoaAddress.toLowerCase(), 'pending']);
+        const nonce = parseInt(nonceHex, 16);
+
+        const gasPriceHex = await rpcCall('eth_gasPrice', []);
+        const baseFee = BigInt(gasPriceHex);
+        const maxPriorityFeePerGas = 2000000000n;
+        const maxFeePerGas = baseFee + maxPriorityFeePerGas;
+
+        let tx: any;
+        if (asset.isNative) {
+            tx = {
+                chainId,
+                nonce,
+                to: recipient as `0x${string}`,
+                value: parseUnits(amount, asset.decimals),
+                maxFeePerGas,
+                maxPriorityFeePerGas,
+                gas: 21000n,
+                data: '0x',
+            };
+        } else {
+            const data = encodeFunctionData({
+                abi: erc20Abi,
+                functionName: 'transfer',
+                args: [recipient as `0x${string}`, parseUnits(amount, asset.decimals)],
+            });
+            tx = {
+                chainId,
+                nonce,
+                to: asset.contractAddress as `0x${string}`,
+                value: 0n,
+                maxFeePerGas,
+                maxPriorityFeePerGas,
+                gas: 100000n,
+                data,
+            };
+        }
+
+        const { signedTransaction } = await signEvmTransaction({
+            evmAccount: eoaAddress as `0x${string}`,
+            transaction: tx,
+        });
+
+        return broadcastRawTx(signedTransaction, chainId);
+    }
+
+    const sendSolanaEoaToken = async (
+        asset: TokenAsset,
+        amount: string,
+        recipient: string,
+    ): Promise<string> => {
+        if (!solanaAddress) throw new Error('Solana address not available.');
+        const amountNum = parseFloat(amount);
+        if (isNaN(amountNum) || amountNum <= 0) throw new Error('Enter a valid amount');
+
+        const { PublicKey, Transaction, SystemProgram } = await import('@solana/web3.js');
+        const SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
+
+        const rpcCall = async (method: string, params: any[]) => {
+            const res = await fetch(SOLANA_RPC, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+            });
+            const data = await res.json();
+            if (data.error) throw new Error(`Solana RPC error: ${data.error.message}`);
+            return data.result;
+        };
+
+        const fromPubkey = new PublicKey(solanaAddress);
+        const toPubkey = new PublicKey(recipient);
+
+        const bh = await rpcCall('getRecentBlockhash', []);
+        const blockhash = bh.value.blockhash;
+
+        const tx = new Transaction();
+        tx.feePayer = fromPubkey;
+        tx.recentBlockhash = blockhash;
+
+        if (asset.isNative) {
+            const lamports = Math.floor(amountNum * Math.pow(10, asset.decimals));
+            tx.add(SystemProgram.transfer({
+                fromPubkey,
+                toPubkey,
+                lamports,
+            }));
+        } else {
+            const { createTransferInstruction, getAssociatedTokenAddress } = await import('@solana/spl-token');
+            const mintPubkey = new PublicKey(asset.contractAddress);
+            const fromAta = await getAssociatedTokenAddress(mintPubkey, fromPubkey, true);
+            const toAta = await getAssociatedTokenAddress(mintPubkey, toPubkey, true);
+            const tokenAmount = Math.floor(amountNum * Math.pow(10, asset.decimals));
+
+            tx.add(createTransferInstruction(
+                fromAta,
+                toAta,
+                fromPubkey,
+                BigInt(tokenAmount),
+            ));
+        }
+
+        const serialized = tx.serialize({ requireAllSignatures: false, verifySignatures: false });
+        const bytes = serialized instanceof Uint8Array ? serialized : new Uint8Array(serialized);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        const base64 = btoa(binary);
+
+        const result = await sendSolanaTransaction({
+            solanaAccount: solanaAddress,
+            network: 'solana',
+            transaction: base64,
+        });
+
+        return result.transactionSignature;
+    }
+
     const handleSend = async () => {
         if (!recipientAddress || !sendAmount || !selectedAsset) return
         setSendError(null)
@@ -156,7 +305,18 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
         setIsSending(true)
 
         try {
+<<<<<<< HEAD
             const hash = await sendEVMNormalToken(selectedAsset!, sendAmount, recipientAddress)
+=======
+            let hash: string;
+            if (selectedChain === 'solana') {
+                hash = await sendSolanaEoaToken(selectedAsset!, sendAmount, recipientAddress);
+            } else if (selectedChain === 43114) {
+                hash = await sendAvalancheEoaToken(selectedAsset!, sendAmount, recipientAddress);
+            } else {
+                hash = await sendEVMNormalToken(selectedAsset!, sendAmount, recipientAddress, selectedChain as number);
+            }
+>>>>>>> ea68f4c (add)
             setTxHash(hash)
             setSendAmount('')
             setRecipientAddress('')
@@ -192,7 +352,7 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
         }
     }
 
-    const historyEvmAddress = smartWalletAddress ?? address ?? ''
+    const historyEvmAddress = isAvalanche || selectedChain === 'solana' ? (eoaAddress ?? address ?? '') : (smartWalletAddress ?? address ?? '')
     useEffect(() => {
         if (isOpen && historyEvmAddress) {
             fetchOnChainHistory(historyEvmAddress, solanaAddress)
@@ -432,7 +592,7 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
                             <span className="font-bold">Transaction Sent!</span>
                         </div>
                         <a
-                            href={`${chainConfig.explorer}${txHash}`}
+                            href={selectedChain === 'solana' ? `https://solscan.io/tx/${txHash}` : `${chainConfig.explorer}/tx/${txHash}`}
                             target="_blank" rel="noopener noreferrer"
                             className="text-xs text-green-500/80 hover:underline break-all"
                         >
@@ -532,14 +692,14 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
                     </div>
                 </div>
 
-                <div className="space-y-2">
-                    <label className="text-white font-semibold block text-sm">Recipient Address</label>
-                    <div className="relative">
-                        <input
-                            type="text"
-                            placeholder="0x..."
-                            value={recipientAddress}
-                            onChange={(e) => setRecipientAddress(e.target.value)}
+                    <div className="space-y-2">
+                        <label className="text-white font-semibold block text-sm">Recipient Address</label>
+                        <div className="relative">
+                            <input
+                                type="text"
+                                placeholder={selectedChain === 'solana' ? 'Solana address...' : '0x...'}
+                                value={recipientAddress}
+                                onChange={(e) => setRecipientAddress(e.target.value)}
                             className="w-full bg-white/5 border border-white/10 rounded-2xl py-3.5 px-4 pr-20 text-white focus:border-[#6320EE] outline-none transition-all placeholder:text-white/20 text-sm"
                         />
                         <button
@@ -664,9 +824,13 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
                                             </div>
                                             Receive
                                         </button>
+<<<<<<< HEAD
 
                                         {isEvmChain(selectedChain) && selectedChain !== 43114 ? (
 
+=======
+                                        {isEvmChain(selectedChain) || selectedChain === 'solana' ? (
+>>>>>>> ea68f4c (add)
                                             <button
                                                 onClick={() => setCurrentView('Send')}
                                                 className="flex items-center justify-center gap-2 bg-[#6320EE] hover:bg-[#5219d1] text-white py-4 rounded-xl font-bold text-lg transition-all active:scale-95"
@@ -686,7 +850,7 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
                                         )}
                                     </div>
 
-                                    {isEvmChain(selectedChain) && (
+                                    {isEvmChain(selectedChain) && selectedChain !== 43114 && (
                                         <div className="flex justify-center">
                                             <div className="flex items-center gap-2 px-4 py-2 rounded-full border border-green-500/30 bg-green-500/10 text-[#00FF5E] text-xs font-bold uppercase tracking-wider shadow-[0_0_15px_rgba(0,255,94,0.1)]">
                                                 <Flame className="w-4 h-4 fill-current" />

@@ -15,19 +15,31 @@ export async function GET(request: NextRequest) {
     }
 
     // Find user by walletAddress, smartWalletAddress, or eoaAddress
-    const addresses = [walletAddress.toLowerCase()]
-    if (eoaAddress && eoaAddress.toLowerCase() !== walletAddress.toLowerCase()) {
-      addresses.push(eoaAddress.toLowerCase())
+    let user = null
+
+    // 1. Prefer the main user (matched by eoaAddress as walletAddress)
+    if (eoaAddress) {
+      user = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { walletAddress: eoaAddress.toLowerCase() },
+            { smartWalletAddress: eoaAddress.toLowerCase() }
+          ]
+        }
+      })
     }
 
-    const user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { walletAddress: { in: addresses } },
-          { smartWalletAddress: { in: addresses } }
-        ]
-      }
-    })
+    // 2. Fallback: find by the wallet address directly
+    if (!user) {
+      user = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { walletAddress: walletAddress.toLowerCase() },
+            { smartWalletAddress: walletAddress.toLowerCase() }
+          ]
+        }
+      })
+    }
 
     if (!user) {
       return NextResponse.json({
