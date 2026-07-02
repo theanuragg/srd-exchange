@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build --webpack",
+    "dev": "node init && next dev",
+    "build": "node init && next build --webpack",
     "postinstall": "prisma generate",
-    "start": "next start",
+    "start": "node init && next start",
     "lint": "next lint"
   },
   "dependencies": {
@@ -21,6 +21,7 @@
     "@prisma/client": "^6.19.2",
     "@radix-ui/react-collapsible": "^1.1.12",
     "@tanstack/react-query": "^5.90.18",
+    "@tanstack/react-router": "^1.170.17",
     "ethers": "^6.16.0",
     "eventemitter2": "^6.4.9",
     "eventemitter3": "^5.0.4",
