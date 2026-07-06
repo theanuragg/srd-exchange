@@ -7,7 +7,7 @@ import { useState } from 'react'
 import { useSidebar } from '@/context/SidebarContext'
 
 export default function SimpleNav() {
-  const [bnbEnabled, setBnbEnabled] = useState(false);
+
   const { openSidebar } = useSidebar();
 
   const {
@@ -24,9 +24,9 @@ export default function SimpleNav() {
           <Image
             src="/image.png"
             alt="SRD Exchange Logo"
-            width={80}
-            height={80}
-            className="w-20 h-20 object-contain"
+            width={48}
+            height={48}
+            className="w-12 h-12 object-contain"
           />
           <span className="text-xl font-bold  tracking-tight hidden md:flex md:flex-row">
             SRD Exchange
@@ -35,24 +35,7 @@ export default function SimpleNav() {
 
         {/* Right Section - Social Icons and Help */}
         <div className="flex items-center space-x-6">
-          {/* BNB Toggle */}
-          <button
-            onClick={() => setBnbEnabled(!bnbEnabled)}
-            className={`w-12 h-8 rounded-2xl flex items-center justify-center border transition
-      ${bnbEnabled
-                ? "bg-yellow-400/20 border-yellow-400"
-                :"bg-yellow-400/20 border-yellow-400"}
-    `}
-          >
-            <Image
-              src="/bsc.svg" // place BNB icon in public folder
-              alt="BNB"
-              width={24}
-              height={24}
-              className={`w-6 h-6 transition ${bnbEnabled ? "opacity-100" : "opacity-100"
-                }`}
-            />
-          </button>
+
 
           {/* User Section - Clickable to open Sidebar */}
           <button
@@ -64,16 +47,16 @@ export default function SimpleNav() {
               alt="Wallet"
               width={20}
               height={20}
-              className="w-5 h-5 shrink-0"
+              className="w-5 h-5 shrink-0 brightness-0 invert"
             />
             {address && isSmartAccountReady ? (
               <div className="flex items-center gap-2">
-                <span className="text-md font-mono text-[#622DBF]">
+                <span className="text-md font-mono text-white">
                   wallet
                 </span>
               </div>
             ) : (
-              <span className="text-sm font-medium text-[#622DBF]">
+              <span className="text-sm font-medium text-white">
                 Wallet
               </span>
             )}

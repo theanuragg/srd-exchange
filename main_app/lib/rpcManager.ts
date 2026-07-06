@@ -1,5 +1,18 @@
-import { createPublicClient, http, PublicClient } from 'viem';
-import { bsc } from 'viem/chains';
+import { createPublicClient, http, PublicClient, Chain } from 'viem';
+import { mainnet, bsc, base, arbitrum, optimism, polygon, avalanche } from 'viem/chains';
+
+const getChain = (chainId: number): Chain => {
+    switch (chainId) {
+        case 1: return mainnet;
+        case 8453: return base;
+        case 42161: return arbitrum;
+        case 10: return optimism;
+        case 137: return polygon;
+        case 43114: return avalanche;
+        case 56:
+        default: return bsc;
+    }
+}
 
 // Comprehensive list of BSC RPC endpoints, ordered by reliability
 // NodeReal is prioritized as the primary endpoint for faster performance
@@ -8,7 +21,6 @@ const BSC_RPC_ENDPOINTS = [
     'https://bsc-dataseed1.defibit.io',
     'https://bsc-dataseed1.ninicoin.io',
     'https://1rpc.io/bnb',
-    // 'https://bsc-mainnet.nodereal.io/v1/9df36507ccc648d6984534b84c99cc1b', // NodeReal (Premium) - Quota Exceeded
 ];
 
 interface RPCEndpointHealth {
@@ -141,16 +153,43 @@ class RPCManager {
     }
 
     /**
-     * Create a public client with automatic RPC failover
+     * Create a public client with automatic RPC failover for BSC, or viem default for others
      */
-    createPublicClient(): PublicClient {
-        const endpoint = this.getHealthyEndpoint();
+    createPublicClient(chainId: number = 56): PublicClient {
+        const chain = getChain(chainId);
+        
+        // For BSC, use our advanced fallback manager
+        if (chainId === 56) {
+            const endpoint = this.getHealthyEndpoint();
+            return createPublicClient({
+                chain,
+                transport: http(endpoint, {
+                    timeout: 10000,
+                    retryCount: 0,
+                }),
+            });
+        }
+        
+        // For other chains, use Alchemy if an API key is available
+        const apiKey = process.env.NEXT_PUBLIC_ALCHEMY_API_KEY;
+        let rpcUrl: string | undefined = undefined;
+
+        if (apiKey) {
+            switch (chainId) {
+                case 1: rpcUrl = `https://eth-mainnet.g.alchemy.com/v2/${apiKey}`; break;
+                case 137: rpcUrl = `https://polygon-mainnet.g.alchemy.com/v2/${apiKey}`; break;
+                case 42161: rpcUrl = `https://arb-mainnet.g.alchemy.com/v2/${apiKey}`; break;
+                case 8453: rpcUrl = `https://base-mainnet.g.alchemy.com/v2/${apiKey}`; break;
+                case 10: rpcUrl = `https://opt-mainnet.g.alchemy.com/v2/${apiKey}`; break;
+                case 11155111: rpcUrl = `https://eth-sepolia.g.alchemy.com/v2/${apiKey}`; break;
+            }
+        }
 
         return createPublicClient({
-            chain: bsc,
-            transport: http(endpoint, {
-                timeout: 10000, // 10 second timeout
-                retryCount: 0, // We handle retries ourselves
+            chain,
+            transport: http(rpcUrl, {
+                timeout: 10000,
+                retryCount: 0,
             }),
         });
     }
@@ -172,24 +211,23 @@ export const rpcManager = new RPCManager();
 // Export helper function for retry with RPC failover
 export async function retryWithRPCFailover<T>(
     fn: (client: PublicClient) => Promise<T>,
-    maxRetries = 3
+    maxRetries = 3,
+    chainId: number = 56
 ): Promise<T | null> {
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
-        const endpoint = rpcManager.getHealthyEndpoint();
-        const client = rpcManager.createPublicClient();
+        const endpoint = chainId === 56 ? rpcManager.getHealthyEndpoint() : 'public_rpc';
+        const client = rpcManager.createPublicClient(chainId);
 
         try {
-            console.log(`🔄 Attempt ${attempt + 1}/${maxRetries} using ${endpoint}`);
             const result = await fn(client);
-            rpcManager.recordSuccess(endpoint);
+            if (chainId === 56) rpcManager.recordSuccess(endpoint);
             return result;
         } catch (error) {
             lastError = error as Error;
-            rpcManager.recordFailure(endpoint);
-            console.warn(`❌ Attempt ${attempt + 1} failed with ${endpoint}:`, error);
-
+            if (chainId === 56) rpcManager.recordFailure(endpoint);
+            
             // Wait before retrying (exponential backoff)
             if (attempt < maxRetries - 1) {
                 const delay = Math.min(1000 * Math.pow(2, attempt), 5000);
@@ -198,6 +236,6 @@ export async function retryWithRPCFailover<T>(
         }
     }
 
-    console.error(`🔴 All ${maxRetries} attempts failed. Last error:`, lastError);
+    return null;
     return null;
 }

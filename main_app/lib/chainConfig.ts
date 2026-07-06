@@ -1,4 +1,4 @@
-export type ChainId = number | 'solana'
+export type ChainId = number
 
 export interface ChainConfig {
   id: ChainId
@@ -18,15 +18,16 @@ export const CHAIN_CONFIGS: ChainConfig[] = [
   { id: 10,     name: 'Optimism',  symbol: 'ETH',  abbr: 'OP',   explorer: 'https://optimistic.etherscan.io', color: '#FF0420', logo: 'https://assets.coingecko.com/coins/images/25244/small/Optimism.png' },
   { id: 137,    name: 'Polygon',   symbol: 'POL',  abbr: 'POL',  explorer: 'https://polygonscan.com',         color: '#8247E5', logo: 'https://assets.coingecko.com/coins/images/4713/small/polygon.png' },
   { id: 43114,  name: 'Avalanche', symbol: 'AVAX', abbr: 'AVAX', explorer: 'https://snowtrace.io',            color: '#E84142', logo: 'https://assets.coingecko.com/coins/images/12559/small/Avalanche_Circle_RedWhite_Trans.png' },
-  { id: 'solana', name: 'Solana',  symbol: 'SOL',  abbr: 'SOL',  explorer: 'https://solscan.io',              color: '#9945FF', logo: 'https://assets.coingecko.com/coins/images/4128/small/solana.png' },
+  { id: 792703809, name: 'Solana',  symbol: 'SOL',  abbr: 'SOL',  explorer: 'https://solscan.io',              color: '#9945FF', logo: 'https://assets.coingecko.com/coins/images/4128/small/solana.png' },
+  // { id: 11155111, name: 'Sepolia', symbol: 'SEP',  abbr: 'SEP',  explorer: 'https://sepolia.etherscan.io',    color: '#627EEA', logo: 'https://assets.coingecko.com/coins/images/279/small/ethereum.png' },
 ]
 
-export function isEvmChain(chainId: ChainId): chainId is number {
-  return typeof chainId === 'number'
+export function isEvmChain(chainId: ChainId): boolean {
+  return chainId !== 792703809
 }
 
-export function isSolana(chainId: ChainId): chainId is 'solana' {
-  return chainId === 'solana'
+export function isSolana(chainId: ChainId): boolean {
+  return chainId === 792703809
 }
 
 export function isBNB(chainId: ChainId): boolean {

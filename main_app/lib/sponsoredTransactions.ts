@@ -5,6 +5,7 @@ import {
   getSenderNonce,
   encodeSmartAccountExecuteCallData,
   encodeSmartAccountExecuteFromData,
+  encodeSmartAccountExecuteBatchFromData,
   buildUnsignedUserOp,
   sponsorViaAlchemy,
   computeUserOpHash,
@@ -26,8 +27,9 @@ async function sendUserOp(params: {
   args: readonly unknown[];
   value?: bigint;
   skipInitCode?: boolean;
+  chainId?: number;
 }, signHash: SignHashFn): Promise<Hex> {
-  const nonce = await getSenderNonce(params.smartAccountAddress);
+  const nonce = await getSenderNonce(params.smartAccountAddress, params.chainId || 56);
   const callData = encodeSmartAccountExecuteCallData({
     target: params.address,
     abi: params.abi,
@@ -46,7 +48,7 @@ async function sendUserOp(params: {
   const rawSignature = await signHash({
     hash,
     smartAccountAddress: params.smartAccountAddress,
-    chainId: 56,
+    chainId: params.chainId || 56,
   });
   const result = await submitToAlchemyBundler({ ...sponsored, signature: rawSignature });
   return result as Hex;
@@ -64,6 +66,7 @@ export async function sendSponsoredContractWrite<
   args: readonly unknown[];
   value?: bigint;
   skipInitCode?: boolean;
+  chainId?: number;
 }, signHash: SignHashFn): Promise<Hex> {
   return sendUserOp({
     smartAccountAddress: params.smartAccountAddress,
@@ -74,6 +77,7 @@ export async function sendSponsoredContractWrite<
     args: params.args,
     value: params.value,
     skipInitCode: params.skipInitCode,
+    chainId: params.chainId,
   }, signHash);
 }
 
@@ -86,8 +90,9 @@ export async function sendSponsoredSmartAccountTransaction(params: {
     value?: Hex;
   };
   skipInitCode?: boolean;
+  chainId?: number;
 }, signHash: SignHashFn): Promise<Hex> {
-  const nonce = await getSenderNonce(params.smartAccountAddress);
+  const nonce = await getSenderNonce(params.smartAccountAddress, params.chainId || 56);
   const callData = encodeSmartAccountExecuteFromData({
     target: params.transaction.to,
     data: params.transaction.data ?? "0x",
@@ -99,14 +104,50 @@ export async function sendSponsoredSmartAccountTransaction(params: {
     callData,
     ownerAddress: params.skipInitCode ? undefined : params.eoaAddress,
   });
-  const sponsored = await sponsorViaAlchemy(userOp, params.eoaAddress);
-  const hash = await computeUserOpHash(sponsored);
+  const sponsored = await sponsorViaAlchemy(userOp, params.eoaAddress, params.chainId || 56);
+  const hash = await computeUserOpHash(sponsored, params.chainId || 56);
   const rawSignature = await signHash({
     hash,
     smartAccountAddress: params.smartAccountAddress,
-    chainId: 56,
+    chainId: params.chainId || 56,
   });
-  const result = await submitToAlchemyBundler({ ...sponsored, signature: rawSignature });
+  const result = await submitToAlchemyBundler({ ...sponsored, signature: rawSignature }, params.chainId || 56);
+  return result as Hex;
+}
+
+export async function sendSponsoredBatchSmartAccountTransaction(params: {
+  smartAccountAddress: Address;
+  eoaAddress: Address;
+  transactions: {
+    to: Address;
+    data?: Hex;
+    value?: Hex;
+  }[];
+  skipInitCode?: boolean;
+  chainId?: number;
+}, signHash: SignHashFn): Promise<Hex> {
+  const nonce = await getSenderNonce(params.smartAccountAddress, params.chainId || 56);
+  const callData = encodeSmartAccountExecuteBatchFromData(
+    params.transactions.map((tx) => ({
+      target: tx.to,
+      data: tx.data ?? "0x",
+      value: BigInt(tx.value ?? "0x0"),
+    }))
+  );
+  const userOp = buildUnsignedUserOp({
+    sender: params.smartAccountAddress,
+    nonce,
+    callData,
+    ownerAddress: params.skipInitCode ? undefined : params.eoaAddress,
+  });
+  const sponsored = await sponsorViaAlchemy(userOp, params.eoaAddress, params.chainId || 56);
+  const hash = await computeUserOpHash(sponsored, params.chainId || 56);
+  const rawSignature = await signHash({
+    hash,
+    smartAccountAddress: params.smartAccountAddress,
+    chainId: params.chainId || 56,
+  });
+  const result = await submitToAlchemyBundler({ ...sponsored, signature: rawSignature }, params.chainId || 56);
   return result as Hex;
 }
 
@@ -133,14 +174,14 @@ export async function sendSponsoredContractWriteDetailed(params: {
     callData,
     ownerAddress: params.skipInitCode ? undefined : params.eoaAddress,
   });
-  const sponsored = await sponsorViaAlchemy(userOp, params.eoaAddress);
-  const userOpHash = await computeUserOpHash(sponsored);
+  const sponsored = await sponsorViaAlchemy(userOp, params.eoaAddress, params.chainId);
+  const userOpHash = await computeUserOpHash(sponsored, params.chainId || 56);
   const signature = await signHash({
     hash: userOpHash,
     smartAccountAddress: params.smartAccountAddress,
     chainId: params.chainId,
   });
-  const bundlerResult = await submitToAlchemyBundler({ ...sponsored, signature });
+  const bundlerResult = await submitToAlchemyBundler({ ...sponsored, signature }, params.chainId || 56);
 
   return {
     userOpHash,

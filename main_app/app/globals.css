@@ -365,3 +365,95 @@ html:has(.landing-no-scrollbar) body::-webkit-scrollbar {
     border-radius: 16px !important;
   }
 }
+
+/* CRT Scanline Overlay */
+.scanlines::after {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 1px,
+    rgba(255, 255, 255, 0.015) 1px,
+    rgba(255, 255, 255, 0.015) 2px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* Landing page only: hide scrollbar */
+.landing-no-scrollbar,
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.landing-no-scrollbar::-webkit-scrollbar,
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Custom Cursor CSS */
+html.has-custom-cursor,
+html.has-custom-cursor body,
+html.has-custom-cursor * {
+  cursor: none !important;
+}
+
+.cursor-ring,
+.cursor-dot {
+  position: fixed;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 10000;
+  mix-blend-mode: screen;
+  transition: opacity 0.2s ease, width 0.25s cubic-bezier(0.22, 1, 0.36, 1),
+              height 0.25s cubic-bezier(0.22, 1, 0.36, 1),
+              background-color 0.25s ease, border-color 0.25s ease;
+}
+
+html.cursor-hue-red { --cursor-rgb: 239, 68, 68; }
+html.cursor-hue-green { --cursor-rgb: 34, 197, 94; }
+html.cursor-hue-purple { --cursor-rgb: 123, 47, 247; }
+
+.cursor-ring {
+  width: 34px;
+  height: 34px;
+  border: 1.5px solid rgba(var(--cursor-rgb), 0.85);
+  border-radius: 9999px;
+  box-shadow:
+    0 0 18px rgba(var(--cursor-rgb), 0.45),
+    inset 0 0 10px rgba(var(--cursor-rgb), 0.25);
+  backdrop-filter: blur(2px);
+}
+
+.cursor-ring--hover {
+  width: 58px;
+  height: 58px;
+  border-color: rgba(var(--cursor-rgb), 1);
+  background: radial-gradient(closest-side, rgba(var(--cursor-rgb), 0.18), transparent 70%);
+  box-shadow:
+    0 0 28px rgba(var(--cursor-rgb), 0.7),
+    inset 0 0 14px rgba(var(--cursor-rgb), 0.35);
+}
+
+.cursor-ring--down {
+  transform-origin: center;
+  width: 26px;
+  height: 26px;
+  border-color: #fff;
+}
+
+.cursor-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: #ffffff;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.9), 0 0 18px rgba(var(--cursor-rgb), 0.8);
+}
+
+.cursor-hidden { opacity: 0; }

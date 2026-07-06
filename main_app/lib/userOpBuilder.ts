@@ -17,6 +17,23 @@ const COINBASE_SMART_ACCOUNT_ABI = [
     outputs: [],
     stateMutability: "payable",
   },
+  {
+    name: "executeBatch",
+    type: "function",
+    inputs: [
+      {
+        name: "calls",
+        type: "tuple[]",
+        components: [
+          { name: "target", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "data", type: "bytes" },
+        ],
+      },
+    ],
+    outputs: [],
+    stateMutability: "payable",
+  },
 ] as const;
 
 const ENTRY_POINT_ABI = [
@@ -58,7 +75,7 @@ const ENTRY_POINT_ABI = [
   },
 ] as const;
 
-export async function getSenderNonce(sender: Address): Promise<bigint> {
+export async function getSenderNonce(sender: Address, chainId: number = 56): Promise<bigint> {
   const result = await retryWithRPCFailover(async (client) => {
     return client.readContract({
       address: ENTRY_POINT_V06,
@@ -66,7 +83,7 @@ export async function getSenderNonce(sender: Address): Promise<bigint> {
       functionName: "getNonce",
       args: [sender, 0n],
     });
-  });
+  }, 3, chainId);
   if (result === null) throw new Error("Failed to fetch nonce from entry point after retries");
   return result;
 }
@@ -106,6 +123,22 @@ export function encodeSmartAccountExecuteFromData(params: {
   });
 }
 
+export function encodeSmartAccountExecuteBatchFromData(
+  calls: { target: Address; value?: bigint; data: Hex }[]
+): Hex {
+  return encodeFunctionData({
+    abi: COINBASE_SMART_ACCOUNT_ABI,
+    functionName: "executeBatch",
+    args: [
+      calls.map((c) => ({
+        target: c.target,
+        value: c.value ?? 0n,
+        data: c.data,
+      })),
+    ],
+  });
+}
+
 const GET_ADDRESS_ABI = [
   {
     inputs: [
@@ -119,7 +152,7 @@ const GET_ADDRESS_ABI = [
   },
 ] as const;
 
-export async function getCounterfactualAddress(ownerAddress: Address): Promise<Address> {
+export async function getCounterfactualAddress(ownerAddress: Address, chainId: number = 56): Promise<Address> {
   const ownerBytes = encodeAbiParameters([{ type: "address" }], [ownerAddress]);
   const result = await retryWithRPCFailover(async (client) => {
     return client.readContract({
@@ -128,15 +161,15 @@ export async function getCounterfactualAddress(ownerAddress: Address): Promise<A
       functionName: "getAddress",
       args: [[ownerBytes], 0n],
     });
-  });
+  }, 3, chainId);
   if (result === null) throw new Error("Failed to compute counterfactual address");
   return result;
 }
 
-export async function isAccountDeployed(address: Address): Promise<boolean> {
+export async function isAccountDeployed(address: Address, chainId: number = 56): Promise<boolean> {
   const result = await retryWithRPCFailover(async (client) => {
     return client.getCode({ address });
-  });
+  }, 3, chainId);
   return result !== null && result !== "0x";
 }
 
@@ -162,12 +195,13 @@ export function buildUnsignedUserOp(params: {
 
 export async function sponsorViaAlchemy(
   userOp: Record<string, unknown>,
-  eoaAddress?: Address
+  eoaAddress?: Address,
+  chainId: number = 56
 ): Promise<Record<string, unknown>> {
   const response = await fetch("/api/user-operations/sponsor", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ userOperation: userOp, eoaAddress }),
+    body: JSON.stringify({ userOperation: userOp, eoaAddress, chainId }),
   });
   const responseText = await response.text();
   let data: Record<string, unknown>;
@@ -186,7 +220,7 @@ export async function sponsorViaAlchemy(
   return data.userOperation as Record<string, unknown>;
 }
 
-export async function computeUserOpHash(userOp: Record<string, unknown>): Promise<Hex> {
+export async function computeUserOpHash(userOp: Record<string, unknown>, chainId: number = 56): Promise<Hex> {
   const op = {
     sender: userOp.sender as Address,
     nonce: BigInt(userOp.nonce as string),
@@ -208,18 +242,30 @@ export async function computeUserOpHash(userOp: Record<string, unknown>): Promis
       functionName: "getUserOpHash",
       args: [op],
     });
-  });
+  }, 3, chainId);
   if (result === null) throw new Error("Failed to compute userOp hash from entry point");
   return result;
 }
 
-const ALCHEMY_RPC_URL = "https://bnb-mainnet.g.alchemy.com/v2";
+function getAlchemyRpcUrl(chainId: number): string {
+  switch (chainId) {
+    case 1: return "https://eth-mainnet.g.alchemy.com/v2";
+    case 137: return "https://polygon-mainnet.g.alchemy.com/v2";
+    case 42161: return "https://arb-mainnet.g.alchemy.com/v2";
+    case 8453: return "https://base-mainnet.g.alchemy.com/v2";
+    case 10: return "https://opt-mainnet.g.alchemy.com/v2";
+    case 11155111: return "https://eth-sepolia.g.alchemy.com/v2";
+    case 56:
+    default: return "https://bnb-mainnet.g.alchemy.com/v2";
+  }
+}
 
-export async function submitToAlchemyBundler(userOp: Record<string, unknown>): Promise<Hex> {
+export async function submitToAlchemyBundler(userOp: Record<string, unknown>, chainId: number = 56): Promise<Hex> {
   const apiKey = process.env.NEXT_PUBLIC_ALCHEMY_API_KEY;
   if (!apiKey) throw new Error("Missing NEXT_PUBLIC_ALCHEMY_API_KEY");
+  const rpcUrl = getAlchemyRpcUrl(chainId);
 
-  const response = await fetch(`${ALCHEMY_RPC_URL}/${apiKey}`, {
+  const response = await fetch(`${rpcUrl}/${apiKey}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -236,6 +282,35 @@ export async function submitToAlchemyBundler(userOp: Record<string, unknown>): P
   return data.result as Hex;
 }
 
+export async function waitForUserOperationReceipt(userOpHash: Hex, chainId: number = 56, retries = 30): Promise<any> {
+  const apiKey = process.env.NEXT_PUBLIC_ALCHEMY_API_KEY;
+  if (!apiKey) throw new Error("Missing NEXT_PUBLIC_ALCHEMY_API_KEY");
+  const rpcUrl = getAlchemyRpcUrl(chainId);
+
+  for (let i = 0; i < retries; i++) {
+    const response = await fetch(`${rpcUrl}/${apiKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "eth_getUserOperationReceipt",
+        params: [userOpHash],
+      }),
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.result) {
+        return data.result;
+      }
+    }
+    // Wait 2 seconds before polling again
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  throw new Error("Timeout waiting for UserOperation receipt");
+}
+
 export function buildDeployTxData(ownerAddress: Address) {
   const ownerBytes = encodeAbiParameters([{ type: "address" }], [ownerAddress]);
   const factoryCalldata = encodeFunctionData({
@@ -249,10 +324,11 @@ export function buildDeployTxData(ownerAddress: Address) {
   };
 }
 
-export async function broadcastRawTx(rawTx: Hex): Promise<Hex> {
+export async function broadcastRawTx(rawTx: Hex, chainId: number = 56): Promise<Hex> {
   const apiKey = process.env.NEXT_PUBLIC_ALCHEMY_API_KEY;
   if (!apiKey) throw new Error("Missing NEXT_PUBLIC_ALCHEMY_API_KEY");
-  const response = await fetch(`${ALCHEMY_RPC_URL}/${apiKey}`, {
+  const rpcUrl = getAlchemyRpcUrl(chainId);
+  const response = await fetch(`${rpcUrl}/${apiKey}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

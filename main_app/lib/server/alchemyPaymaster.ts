@@ -162,11 +162,33 @@ const parseGasManagerResponse = (
 
 // Calls Alchemy Gas Manager to fill the paymaster fields for a BNB user operation.
 export async function attachSponsoredPaymasterData(
-  userOp: UserOperation
+  userOp: UserOperation,
+  chainId: number = 56
 ): Promise<UserOperation> {
-  const rpcUrl = getRequiredEnv("ALCHEMY_RPC_URL");
-  const policyId = getRequiredEnv("ALCHEMY_POLICY_ID");
-  const entryPoint = getRequiredEnv("ENTRY_POINT");
+  const apiKey = process.env.NEXT_PUBLIC_ALCHEMY_API_KEY;
+  if (!apiKey) throw new Error("Missing NEXT_PUBLIC_ALCHEMY_API_KEY");
+  
+  let rpcUrl = `https://bnb-mainnet.g.alchemy.com/v2/${apiKey}`;
+  let chainIdHex = "0x38";
+  let policyId = process.env.ALCHEMY_POLICY_ID;
+
+  if (chainId === 11155111) {
+    rpcUrl = `https://eth-sepolia.g.alchemy.com/v2/${apiKey}`;
+    chainIdHex = "0xaa36a7"; // Sepolia chain ID hex
+    policyId = process.env.ALCHEMY_SEPOLIA_POLICY_ID || policyId;
+  } else if (chainId === 137) {
+    rpcUrl = `https://polygon-mainnet.g.alchemy.com/v2/${apiKey}`;
+    chainIdHex = "0x89"; // Polygon chain ID hex
+  } else if (chainId === 8453) {
+    rpcUrl = `https://base-mainnet.g.alchemy.com/v2/${apiKey}`;
+    chainIdHex = "0x2105"; // Base chain ID hex
+  }
+
+  if (!policyId) {
+    throw new Error("Missing ALCHEMY_POLICY_ID or ALCHEMY_SEPOLIA_POLICY_ID in environment variables");
+  }
+
+  const entryPoint = process.env.ENTRY_POINT || "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789";
 
   const payload = {
     jsonrpc: "2.0",
@@ -175,7 +197,7 @@ export async function attachSponsoredPaymasterData(
     params: [
       {
         policyId,
-        chainId: BNB_CHAIN_ID_HEX,
+        chainId: chainIdHex,
         entryPoint,
         dummySignature: getSimulationSignature(userOp.signature),
         userOperation: userOp,

@@ -3,6 +3,11 @@ const nextConfig = {
   turbopack: {
     root: __dirname,
   },
+
+  allowedDevOrigins: [
+    "https://flatten-from-removed.ngrok-free.dev",
+    "flatten-from-removed.ngrok-free.dev"
+  ],
   serverExternalPackages: ['@prisma/client'],
   webpack: (config: any) => {
     config.resolve = config.resolve || {};

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useIsSignedIn, useEvmAddress, useEvmAccounts, useEvmSmartAccounts, useSignEvmHash, useSignEvmTransaction, useSolanaAddress, useCreateSolanaAccount } from '@coinbase/cdp-hooks';
+import { useIsSignedIn, useEvmAddress, useEvmAccounts, useEvmSmartAccounts, useSignEvmHash, useSignEvmTransaction, useSolanaAddress, useCreateSolanaAccount, useSendSolanaTransaction } from '@coinbase/cdp-hooks';
 import { parseUnits, formatUnits, Address, type Hex, type TransactionSerializableEIP1559 } from "viem";
 import { retryWithRPCFailover } from "@/lib/rpcManager";
 import { sendSponsoredContractWrite } from "@/lib/sponsoredTransactions";
@@ -12,10 +12,16 @@ const GAS_STATION_ENABLED =
 
 const CONTRACTS = {
   USDT: {
-    [56]: "0x55d398326f99059fF775485246999027B3197955" as Address,
+    1: "0xdAC17F958D2ee523a2206206994597C13D831ec7" as Address, // Ethereum
+    56: "0x55d398326f99059fF775485246999027B3197955" as Address, // BSC
+    8453: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address, // Base (USDC used here as proxy, can map specifically later)
+    42161: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9" as Address, // Arbitrum
+    10: "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58" as Address, // Optimism
+    137: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F" as Address, // Polygon
+    43114: "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7" as Address, // Avalanche
   },
   P2P_TRADING: {
-    [56]: "0xbfb247eA56F806607f2346D9475F669F30EAf2fB" as Address,
+    56: "0xbfb247eA56F806607f2346D9475F669F30EAf2fB" as Address, // P2P contract is only on BSC
   },
 };
 
@@ -332,10 +338,11 @@ export function useWalletManager() {
   const { createSolanaAccount } = useCreateSolanaAccount();
   const [selectedChain, setSelectedChain] = useState<ChainId>(56);
   const solanaAddress = cdpSolanaAddress ?? null;
+  const { sendSolanaTransaction } = useSendSolanaTransaction();
 
   const switchChain = async (chainId: ChainId) => {
     setSelectedChain(chainId);
-    if (chainId === 'solana' && !cdpSolanaAddress) {
+    if (chainId === 792703809 && !cdpSolanaAddress) {
       try {
         await createSolanaAccount();
       } catch (e) {
@@ -345,13 +352,13 @@ export function useWalletManager() {
   };
 
   const selectedAddress: string | null = (() => {
-    if (selectedChain === 'solana') return solanaAddress;
+    if (selectedChain === 792703809) return solanaAddress;
     return smartWalletAddress ?? eoaAddress ?? null;
   })();
 
   const isConnected = isSignedIn;
   const isConnecting = false;
-  const chainId = 56;
+  const chainId = selectedChain;
   const [walletData, setWalletData] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [bnbBalance, setBnbBalance] = useState<bigint | null>(null);
@@ -360,7 +367,7 @@ export function useWalletManager() {
   const [txHash, setTxHash] = useState<`0x${string}` | null>(null);
   const [isPending, setIsPending] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
-  const balanceAddress = address;
+  const balanceAddress = selectedChain === 792703809 ? solanaAddress : address;
 
   const refetchBnb = async () => {
     if (!balanceAddress) return;
@@ -368,13 +375,13 @@ export function useWalletManager() {
     try {
       const balance = await retryWithRPCFailover(async (client) => {
         return await client.getBalance({ address: balanceAddress as Address });
-      });
+      }, 3, chainId as number);
 
       if (balance !== null) {
         setBnbBalance(balance);
       }
     } catch (error) {
-      console.error("Failed to fetch BNB balance:", error);
+      console.error(`Failed to fetch native balance on chain ${chainId}:`, error);
     }
   };
 
@@ -382,14 +389,17 @@ export function useWalletManager() {
     if (!balanceAddress) return;
 
     try {
+      const usdtAddress = CONTRACTS.USDT[chainId as keyof typeof CONTRACTS.USDT] || CONTRACTS.USDT[56];
+      if (!usdtAddress) return;
+
       const balance = await retryWithRPCFailover(async (client) => {
         return await client.readContract({
-          address: CONTRACTS.USDT[56],
+          address: usdtAddress,
           abi: USDT_ABI,
           functionName: "balanceOf",
           args: [balanceAddress as Address],
         });
-      });
+      }, 3, chainId as number);
 
       if (balance !== null) {
         setUsdtBalance(balance as bigint);
@@ -397,17 +407,17 @@ export function useWalletManager() {
 
       const decimals = await retryWithRPCFailover(async (client) => {
         return await client.readContract({
-          address: CONTRACTS.USDT[56],
+          address: usdtAddress,
           abi: USDT_ABI,
           functionName: "decimals",
         });
-      });
+      }, 3, chainId as number);
 
       if (decimals !== null) {
         setUsdtDecimals(Number(decimals));
       }
     } catch (error) {
-      console.error("Failed to fetch USDT balance:", error);
+      console.error(`Failed to fetch USDT balance on chain ${chainId}:`, error);
     }
   };
 
@@ -435,7 +445,7 @@ export function useWalletManager() {
     }
   }, [usdtBalance, usdtDecimals, balanceAddress, chainId]);
 
-  const isOnBSC = true;
+  const isOnBSC = chainId === 56;
 
   const readContractHelper = async (params: {
     address: Address;
@@ -474,7 +484,7 @@ export function useWalletManager() {
       const nonce = nonceResult;
 
       const tx: TransactionSerializableEIP1559 = {
-        chainId: 56,
+        chainId: chainId as number,
         nonce,
         maxFeePerGas: 5000000000n,
         maxPriorityFeePerGas: 2000000000n,
@@ -528,6 +538,7 @@ export function useWalletManager() {
         functionName: params.functionName,
         args: params.args,
         skipInitCode: shouldUseCdpSmartAccount,
+        chainId: chainId as number,
       }, signHash);
 
       setTxHash(hash);
@@ -570,8 +581,8 @@ export function useWalletManager() {
 
       const walletInfo = {
         address: balanceAddress,
-        chainId: 56,
-        isOnBSC: true,
+        chainId: chainId as number,
+        isOnBSC: isOnBSC,
         balances: {
           bnb: {
             raw: bnbBalance || BigInt(0),
@@ -1223,6 +1234,23 @@ export function useWalletManager() {
     }
   };
 
+  const executeSolanaSwap = async (base64Transaction: string) => {
+    if (!solanaAddress) throw new Error("Solana wallet not connected");
+    setIsPending(true);
+    try {
+      const result = await sendSolanaTransaction({
+        solanaAccount: solanaAddress,
+        network: "mainnet",
+        transaction: base64Transaction
+      });
+      setIsPending(false);
+      return result.transactionSignature;
+    } catch (error) {
+      setIsPending(false);
+      throw error;
+    }
+  };
+
   return {
     address,
     eoaAddress,
@@ -1240,7 +1268,7 @@ export function useWalletManager() {
     fetchWalletData,
     refetchBalances,
     switchChain,
-    isOnBSC: true,
+    isOnBSC,
     switchToBSC: async () => true,
     canTrade: true,
 
@@ -1267,5 +1295,6 @@ export function useWalletManager() {
     hash: txHash,
     isPending,
     isConfirming,
+    executeSolanaSwap
   };
 }
