@@ -1,6 +1,6 @@
 "use client";
 
-import SimpleNav from '@/components/simple-nav';
+import Navigation from '@/components/landing/Navigation';
 import AuthGuard from '@/components/auth/AuthGuard';
 import { useSignOut } from '@coinbase/cdp-hooks';
 import { useRouter } from 'next/navigation';
@@ -72,8 +72,8 @@ export default function Dashboard() {
     return (
         <AuthGuard requireAuth={true}>
             <div className="bg-black">
-                <div className="flex justify-between items-center p-4">
-                    <SimpleNav />
+                <div className="shrink-0 relative z-50 h-[72px]">
+                    <Navigation />
                 </div>
                 <BuySellSection />
                 <QR/>           

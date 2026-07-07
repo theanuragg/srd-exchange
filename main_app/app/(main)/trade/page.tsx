@@ -1,7 +1,7 @@
 'use client';
 
 import AuthGuard from '@/components/auth/AuthGuard';
-import SimpleNav from '@/components/simple-nav';
+import Navigation from '@/components/landing/Navigation';
 import { motion } from 'framer-motion';
 import { BarChart3, TrendingUp, Cpu } from 'lucide-react';
 
@@ -9,7 +9,7 @@ export default function TradePage() {
     return (
         <AuthGuard requireAuth={true}>
             <div className="bg-black min-h-screen">
-                <SimpleNav />
+                <Navigation />
                 <main className="max-w-7xl mx-auto px-4 pt-8 animate-in fade-in slide-in-from-bottom-4 duration-700 relative">
                     {/* Upcoming Overlay */}
                     <div className="absolute inset-x-4 inset-y-0 z-50 flex items-center justify-center backdrop-blur-[1px] rounded-[3rem]  shadow-2xl mt-4">

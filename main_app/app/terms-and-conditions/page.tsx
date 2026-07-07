@@ -2,7 +2,7 @@
 
 import { useWalletManager } from '@/hooks/useWalletManager'
 import { useRouter } from 'next/navigation'
-import SimpleNav from '@/components/simple-nav'
+import Navigation from '@/components/landing/Navigation';
 
 export default function TermsAndConditionsPage() {
   const { address } = useWalletManager()
@@ -19,7 +19,7 @@ export default function TermsAndConditionsPage() {
 
   return (
     <div className="min-h-screen bg-black text-white">
-      <SimpleNav />
+      <Navigation />
 
       <div className="max-w-4xl mx-auto px-6 py-12">
         {/* Header */}

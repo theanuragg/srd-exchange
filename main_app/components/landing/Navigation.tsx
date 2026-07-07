@@ -4,6 +4,8 @@ import type { ComponentType } from 'react';
 import { usePathname } from 'next/navigation';
 import { CandlestickChart, Mail, HelpCircle, Menu, X, Rocket } from 'lucide-react';
 import { useSignInModal, SignInModalWrapper } from './hooks/useSignInModal';
+import { useWalletManager } from '@/hooks/useWalletManager';
+import { useSidebar } from '@/context/SidebarContext';
 
 const isExternalLink = (href: string) => href.startsWith('http') || href.startsWith('mailto:');
 
@@ -16,10 +18,10 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { label: 'Contact', icon: Mail, href: 'mailto:info@srd.exchange' },
-  { label: 'Why us?', icon: HelpCircle, href: '#what-we-solve' },
-  { label: 'Futures', icon: CandlestickChart, href: 'https://srd.exchange/trade' },
-  { label: 'Swap', iconSrc: '/assets/swap-icon.png', href: 'https://www.srd.exchange/swap' },
-  { label: 'Fiat', iconSrc: '/assets/fiat-icon.png', href: 'https://srd.exchange/fiat' },
+  { label: 'Why us?', icon: HelpCircle, href: '/#what-we-solve' },
+  { label: 'Futures', icon: CandlestickChart, href: '/trade' },
+  { label: 'Swap', iconSrc: '/assets/swap-icon.png', href: '/swap' },
+  { label: 'Fiat', iconSrc: '/assets/fiat-icon.png', href: '/fiat' },
 ];
 
 function XIcon({ className = '' }: { className?: string }) {
@@ -54,10 +56,12 @@ const socialLinks = [
 
 export default function Navigation() {
   const pathname = usePathname();
-  const isSwapPage = pathname === '/swap' || pathname === '/wallet';
+  const isAppPage = pathname !== '/';
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const { walletModalOpen, setWalletModalOpen, handleCtaClick } = useSignInModal();
+  const { address, isSmartAccountReady } = useWalletManager();
+  const { openSidebar } = useSidebar();
 
   useEffect(() => {
     const handleScroll = () => {
@@ -72,7 +76,7 @@ export default function Navigation() {
       <nav
         className={`fixed top-0 left-0 right-0 z-50 h-[72px] transition-all duration-200 backdrop-blur-xl backdrop-saturate-150 border-b ${
           scrolled
-            ? 'bg-black/60 border-purple/30 shadow-[0_4px_30px_rgba(123,47,247,0.15)]'
+            ? 'bg-[#050505]/95 border-purple/30 shadow-[0_4px_30px_rgba(123,47,247,0.15)]'
             : 'bg-black/30 border-purple/15'
         }`}
       >
@@ -89,8 +93,7 @@ export default function Navigation() {
             </span>
           </a>
 
-          {!isSwapPage && (
-            <div className="hidden md:flex items-center gap-1">
+          <div className="hidden md:flex items-center gap-1">
               {navItems.map((item) => (
                 <a
                   key={item.label}
@@ -108,13 +111,27 @@ export default function Navigation() {
                 </a>
               ))}
 
-              <button
-                onClick={handleCtaClick}
-                className="ml-2 flex items-center gap-1.5 px-5 py-2.5 text-sm font-semibold text-white bg-purple rounded-lg border border-transparent shadow-[0_0_15px_rgba(123,47,247,0.3)] hover:bg-purple-hover hover:shadow-[0_0_25px_rgba(123,47,247,0.5)] hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
-              >
-                <Rocket className="w-4 h-4" />
-                <span>Launch</span>
-              </button>
+              {isAppPage ? (
+                <button
+                  onClick={openSidebar}
+                  className="ml-2 flex items-center gap-2 px-4 py-2 border border-[#622DBF] rounded-lg bg-[#622DBF]/5 hover:bg-[#622DBF]/15 transition-all group shadow-[0_0_15px_rgba(123,47,247,0.15)]"
+                >
+                  <img src="/assets/wallet-icon.svg" alt="Wallet" className="w-4 h-4 shrink-0 brightness-0 invert" />
+                  {address && isSmartAccountReady ? (
+                    <span className="text-sm font-mono text-white">wallet</span>
+                  ) : (
+                    <span className="text-sm font-medium text-white">Wallet</span>
+                  )}
+                </button>
+              ) : (
+                <button
+                  onClick={handleCtaClick}
+                  className="ml-2 flex items-center gap-1.5 px-5 py-2.5 text-sm font-semibold text-white bg-purple rounded-lg border border-transparent shadow-[0_0_15px_rgba(123,47,247,0.3)] hover:bg-purple-hover hover:shadow-[0_0_25px_rgba(123,47,247,0.5)] hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
+                >
+                  <Rocket className="w-4 h-4" />
+                  <span>Launch</span>
+                </button>
+              )}
 
               <div className="flex items-center gap-3 ml-4 pl-4 border-l border-bordercolor-subtle">
                 {socialLinks.map((social) => (
@@ -131,29 +148,14 @@ export default function Navigation() {
                 ))}
               </div>
             </div>
-          )}
 
-          {isSwapPage ? (
-            <a
-              href="/wallet"
-              aria-label="Open wallet"
-              className="p-1.5 rounded-lg hover:bg-white/10 transition"
-            >
-              <img
-                src="/assets/wallet-icon.svg"
-                alt="Wallet"
-                className="h-6 w-6 object-contain"
-              />
-            </a>
-          ) : (
             <button
-              className="md:hidden text-white p-2"
+              className="md:hidden text-white p-2 ml-auto"
               onClick={() => setMobileOpen(!mobileOpen)}
               aria-label="Toggle menu"
             >
               {mobileOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
             </button>
-          )}
         </div>
       </nav>
 
@@ -181,16 +183,33 @@ export default function Navigation() {
             </a>
           ))}
 
-          <button
-            onClick={() => {
-              setMobileOpen(false);
-              handleCtaClick();
-            }}
-            className="flex items-center gap-2 px-8 py-3 text-lg font-semibold text-white bg-purple rounded-lg shadow-[0_0_15px_rgba(123,47,247,0.3)] hover:bg-purple-hover hover:shadow-[0_0_25px_rgba(123,47,247,0.5)] transition-all duration-200 mt-2"
-          >
-            <Rocket className="w-5 h-5" />
-            <span>Launch</span>
-          </button>
+          {isAppPage ? (
+            <button
+              onClick={() => {
+                setMobileOpen(false);
+                openSidebar();
+              }}
+              className="flex items-center gap-2 px-8 py-3 text-lg font-semibold text-white border border-[#622DBF] bg-[#622DBF]/5 rounded-lg shadow-[0_0_15px_rgba(123,47,247,0.15)] hover:bg-[#622DBF]/15 transition-all duration-200 mt-2"
+            >
+              <img src="/assets/wallet-icon.svg" alt="Wallet" className="w-5 h-5 shrink-0 brightness-0 invert" />
+              {address && isSmartAccountReady ? (
+                <span className="font-mono">wallet</span>
+              ) : (
+                <span>Wallet</span>
+              )}
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                setMobileOpen(false);
+                handleCtaClick();
+              }}
+              className="flex items-center gap-2 px-8 py-3 text-lg font-semibold text-white bg-purple rounded-lg shadow-[0_0_15px_rgba(123,47,247,0.3)] hover:bg-purple-hover hover:shadow-[0_0_25px_rgba(123,47,247,0.5)] transition-all duration-200 mt-2"
+            >
+              <Rocket className="w-5 h-5" />
+              <span>Launch</span>
+            </button>
+          )}
 
           <div className="flex items-center gap-6 mt-3">
             {socialLinks.map((social) => (

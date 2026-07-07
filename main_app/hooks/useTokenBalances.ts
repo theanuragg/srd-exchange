@@ -22,7 +22,7 @@ export function useTokenBalances(
   evmAddress?: string,
   solanaAddress?: string
 ) {
-  const [balances, setBalances] = useState<Record<string, { raw: bigint, formatted: string }>>({});
+  const [balances, setBalances] = useState<Record<string, { raw: bigint, formatted: string, usdValue?: number, price?: number }>>({});
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
@@ -36,7 +36,7 @@ export function useTokenBalances(
       setIsLoading(true);
 
       try {
-        const newBalances: Record<string, { raw: bigint, formatted: string }> = {};
+        const newBalances: Record<string, { raw: bigint, formatted: string, usdValue?: number, price?: number }> = {};
 
         if (chainId === 792703809) {
           // Solana Logic
@@ -99,8 +99,6 @@ export function useTokenBalances(
           
           const calls = tokens.map(token => {
             if (token.address === '0x0000000000000000000000000000000000000000') {
-               // We will fetch native separately or use Multicall getEthBalance
-               // Using multicall wrapper for native balance might be complex without specific abi here
                return null; 
             }
             return {
@@ -135,6 +133,66 @@ export function useTokenBalances(
               };
             }
           }
+        }
+
+        // Fetch Prices from DeFiLlama
+        try {
+          const defiLlamaChainMap: Record<number, string> = {
+            1: 'ethereum',
+            56: 'bsc',
+            137: 'polygon',
+            10: 'optimism',
+            42161: 'arbitrum',
+            8453: 'base',
+            43114: 'avax',
+            792703809: 'solana'
+          };
+          
+          const dlChain = defiLlamaChainMap[chainId];
+          if (dlChain) {
+            const keysToFetch: string[] = [];
+            const tokenAddresses: string[] = [];
+            
+            for (const token of tokens) {
+              const bal = newBalances[token.address];
+              if (bal && parseFloat(bal.formatted) > 0) {
+                const addr = token.address.toLowerCase();
+                let fetchKey = `${dlChain}:${addr}`;
+                
+                if (chainId === 792703809 && addr === '11111111111111111111111111111111') {
+                   fetchKey = 'coingecko:solana';
+                } else if (addr === '0x0000000000000000000000000000000000000000') {
+                   const nativeGeckoMap: Record<number, string> = {
+                     1: 'ethereum', 56: 'binancecoin', 137: 'matic-network', 10: 'ethereum', 42161: 'ethereum', 8453: 'ethereum', 43114: 'avalanche-2'
+                   };
+                   fetchKey = `coingecko:${nativeGeckoMap[chainId] || 'ethereum'}`;
+                }
+                
+                keysToFetch.push(fetchKey);
+                tokenAddresses.push(token.address);
+              }
+            }
+            
+            if (keysToFetch.length > 0) {
+              const url = `https://coins.llama.fi/prices/current/${keysToFetch.join(',')}`;
+              const priceRes = await fetch(url);
+              const priceData = await priceRes.json();
+              const coins = priceData.coins || {};
+              
+              for (let i = 0; i < keysToFetch.length; i++) {
+                const key = keysToFetch[i];
+                const tAddr = tokenAddresses[i];
+                if (coins[key]) {
+                  const price = coins[key].price || 0;
+                  const balFormatted = parseFloat(newBalances[tAddr].formatted);
+                  newBalances[tAddr].price = price;
+                  newBalances[tAddr].usdValue = balFormatted * price;
+                }
+              }
+            }
+          }
+        } catch (priceErr) {
+          console.error("Error fetching prices:", priceErr);
         }
 
         if (isMounted) {

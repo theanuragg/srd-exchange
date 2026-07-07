@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useIsSignedIn } from '@coinbase/cdp-hooks';
 import { SignInModal, SignInModalContent } from '@coinbase/cdp-react';
 
@@ -8,12 +8,13 @@ export function useSignInModal() {
   const [walletModalOpen, setWalletModalOpen] = useState(false);
   const { isSignedIn } = useIsSignedIn();
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
-    if (isSignedIn) {
+    if (isSignedIn && pathname === '/') {
       router.push('/fiat');
     }
-  }, [isSignedIn, router]);
+  }, [isSignedIn, router, pathname]);
 
   const handleCtaClick = () => {
     if (isSignedIn) {

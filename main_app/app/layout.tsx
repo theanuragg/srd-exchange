@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Space_Grotesk, Inter, Montserrat } from "next/font/google";
+import { Space_Grotesk, Inter, JetBrains_Mono } from "next/font/google";
 import ClientProviders from "@/components/ClientProviders";
 import "./globals.css";
 
@@ -15,9 +15,9 @@ const inter = Inter({
   display: "swap",
 });
 
-const montserrat = Montserrat({
+const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
-  variable: "--font-montserrat",
+  variable: "--font-jetbrains-mono",
   display: "swap",
 });
 
@@ -33,7 +33,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${spaceGrotesk.variable} ${inter.variable} ${montserrat.variable} bg-black antialiased`}>
+      <body className={`${spaceGrotesk.variable} ${inter.variable} ${jetbrainsMono.variable} bg-black antialiased`}>
         <ClientProviders>{children}</ClientProviders>
       </body>
     </html>

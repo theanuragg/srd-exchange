@@ -315,16 +315,25 @@ export default function MultiChainSwap() {
             <span className="text-white font-bold text-xs tracking-wide">Trending</span>
           </div>
           <div className="flex flex-1 items-center gap-2 overflow-x-hidden relative mask-fade-right">
-            {[
-              { symbol: 'AERO', color: 'bg-blue-600' },
-              { symbol: 'IN', color: 'bg-purple' },
-              { symbol: 'CARDS', color: 'bg-blue-800' },
-              { symbol: 'PEPE', color: 'bg-green-500' }
-            ].map((t) => (
-              <div key={t.symbol} className="flex items-center gap-1.5 shrink-0 bg-black/40 rounded-full px-2 py-0.5 border border-white/5 cursor-pointer hover:bg-black/60 transition-colors">
-                <div className={`w-3.5 h-3.5 ${t.color} rounded-full flex items-center justify-center border border-white/10`}>
-                  <div className="w-1.5 h-1.5 bg-white rounded-full"></div>
-                </div>
+            {(chains.find(c => c.id === sourceChain)?.featuredTokens || []).slice(0, 5).map((t) => (
+              <div 
+                key={t.symbol} 
+                onClick={() => setSourceToken({
+                  address: t.address as Address,
+                  symbol: t.symbol,
+                  decimals: t.decimals,
+                  logo: t.metadata?.logoURI || undefined,
+                  name: t.name
+                })}
+                className="flex items-center gap-1.5 shrink-0 bg-black/40 rounded-full px-2 py-0.5 border border-white/5 cursor-pointer hover:bg-black/60 transition-colors"
+              >
+                {t.metadata?.logoURI ? (
+                  <img src={t.metadata.logoURI} alt={t.symbol} className="w-3.5 h-3.5 rounded-full object-cover border border-white/10" />
+                ) : (
+                  <div className="w-3.5 h-3.5 bg-purple rounded-full flex items-center justify-center border border-white/10">
+                    <div className="w-1.5 h-1.5 bg-white rounded-full"></div>
+                  </div>
+                )}
                 <span className="text-[10px] font-bold text-white tracking-wide">{t.symbol}</span>
               </div>
             ))}
@@ -361,7 +370,7 @@ export default function MultiChainSwap() {
 
         <div className="flex items-center justify-between mt-3">
           <div className="flex items-center gap-2 text-text-tertiary text-sm">
-            <span></span>
+            <span>{quote?.details?.currencyIn?.amountUsd ? `~$${Number(quote.details.currencyIn.amountUsd).toFixed(2)}` : ''}</span>
             <button
               onClick={handleFlip}
               aria-label="Flip currency display"
@@ -417,7 +426,7 @@ export default function MultiChainSwap() {
           <TokenChip token={destToken} chainId={destChain} chainConfig={dChainConfig} onClick={() => setShowDestDropdown(true)} variant="cta" />
         </div>
         <div className="flex items-center justify-between mt-3">
-          <span className="text-text-tertiary text-sm"></span>
+          <span className="text-text-tertiary text-sm">{quote?.details?.currencyOut?.amountUsd ? `~$${Number(quote.details.currencyOut.amountUsd).toFixed(2)}` : ''}</span>
         </div>
       </div>
 
@@ -449,10 +458,10 @@ export default function MultiChainSwap() {
         </span>
       </button>
 
-      <div className="mt-3 flex items-center justify-center gap-1.5 text-[16px] font-medium text-white/40">
+      <div className="mt-3 flex items-center justify-center gap-1.5 text-[10px] font-medium text-white/40">
         <span>Powered by</span>
-        <a href="https://relay.link" target="_blank" rel="noopener noreferrer" className="text-white/70 hover:text-white transition-colors flex items-center gap-1">
-          <span className="font-bold tracking-wide text-purple">Relay</span>
+        <a href="https://relay.link" target="_blank" rel="noopener noreferrer" className="text-white/70 hover:opacity-80 transition-opacity flex items-center gap-1">
+          <img src="/lockup_white.svg" alt="Relay" className="h-5 w-auto ml-1" />
         </a>
       </div>
       {/* Swap Completed Toast */}

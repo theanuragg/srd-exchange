@@ -33,10 +33,12 @@ export function useRelayChains() {
   useEffect(() => {
     async function fetchChains() {
       try {
-        const isTestnet = process.env.NEXT_PUBLIC_USE_TESTNET === 'true';
-        const baseUrl = isTestnet ? 'https://api.testnets.relay.link' : 'https://api.relay.link';
+        const baseUrl = 'https://api.relay.link';
         
-        const response = await fetch(`${baseUrl}/chains`);
+        const apiKey = process.env.NEXT_PUBLIC_RELAY_API_KEY;
+        const headers: HeadersInit = apiKey ? { 'x-api-key': apiKey } : {};
+        
+        const response = await fetch(`${baseUrl}/chains`, { headers });
         if (!response.ok) throw new Error('Failed to fetch chains');
         
         const data = await response.json();

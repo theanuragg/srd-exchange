@@ -88,12 +88,13 @@ export function DynamicTokenModal({ isOpen, onClose, chains, selectedChainId, ev
   const searchCustomToken = async (chainId: number, query: string) => {
     setIsSearching(true);
     try {
-      const isTestnet = process.env.NEXT_PUBLIC_USE_TESTNET === 'true';
-      const baseUrl = isTestnet ? 'https://api.testnets.relay.link' : 'https://api.relay.link';
+      const baseUrl = 'https://api.relay.link';
+      const apiKey = process.env.NEXT_PUBLIC_RELAY_API_KEY;
+      const baseHeaders: HeadersInit = apiKey ? { 'x-api-key': apiKey } : {};
       
       // If it's a contract address
       if (query.startsWith('0x') && query.length === 42) {
-        const response = await fetch(`${baseUrl}/chains/${chainId}/currencies/${query}`);
+        const response = await fetch(`${baseUrl}/chains/${chainId}/currencies/${query}`, { headers: baseHeaders });
         if (response.ok) {
           const data = await response.json();
           if (data && data.currency) {
@@ -111,7 +112,7 @@ export function DynamicTokenModal({ isOpen, onClose, chains, selectedChainId, ev
         // Text search across all Relay currencies
         const response = await fetch(`${baseUrl}/currencies/v1`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { ...baseHeaders, 'Content-Type': 'application/json' },
           body: JSON.stringify({ limit: 50, chainIds: [chainId], term: query })
         });
         
@@ -149,7 +150,7 @@ export function DynamicTokenModal({ isOpen, onClose, chains, selectedChainId, ev
         initial={{ scale: 0.95, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.95, opacity: 0 }}
-        className="bg-[#111] border border-white/10 w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[80vh]"
+        className="bg-[#0a0a0a]/95 backdrop-blur-2xl backdrop-saturate-150 border border-white/10 w-full max-w-lg rounded-3xl overflow-hidden shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex flex-col max-h-[80vh]"
       >
         <div className="p-4 border-b border-white/10 flex justify-between items-center shrink-0">
           <h3 className="text-white font-bold text-lg">Select Token & Chain</h3>
@@ -225,10 +226,15 @@ export function DynamicTokenModal({ isOpen, onClose, chains, selectedChainId, ev
                                 {token.name && <div className="text-xs text-white/40">{token.name}</div>}
                               </div>
                             </div>
-                            <div className="text-right">
+                            <div className="text-right flex flex-col justify-center">
                               <div className="text-sm text-white font-medium">
                                 {isLoadingBalances ? <span className="animate-pulse bg-white/20 h-4 w-12 rounded inline-block"></span> : balances[token.address]?.formatted || '0.00'}
                               </div>
+                              {!isLoadingBalances && balances[token.address]?.usdValue !== undefined && balances[token.address].usdValue! > 0 && (
+                                <div className="text-xs text-white/50">
+                                  ${balances[token.address].usdValue!.toFixed(2)}
+                                </div>
+                              )}
                             </div>
                         </button>
                       ))}

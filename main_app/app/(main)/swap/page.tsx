@@ -1,5 +1,5 @@
 import AuthGuard from '@/components/auth/AuthGuard';
-import SimpleNav from '@/components/simple-nav';
+import Navigation from '@/components/landing/Navigation';
 import MultiChainSwap from '@/components/MultiChainSwap';
 import StarField from '@/components/StarField';
 import CustomCursor from '@/components/CustomCursor';
@@ -10,8 +10,8 @@ export default function SwapPage() {
       <div className="relative bg-black h-[100dvh] text-white scanlines overflow-hidden flex flex-col no-scrollbar">
         <CustomCursor />
         <StarField />
-        <div className="shrink-0 relative z-10">
-          <SimpleNav />
+        <div className="shrink-0 relative z-50">
+          <Navigation />
         </div>
 
         {/* Ambient glow */}
@@ -24,10 +24,10 @@ export default function SwapPage() {
           }}
         />
 
-        <main className="relative flex-1 flex flex-col items-center justify-center px-4 overflow-y-auto no-scrollbar pb-6 z-10">
+        <main className="relative flex-1 flex flex-col items-center justify-start pt-[100px] md:pt-[120px] px-4 overflow-y-auto no-scrollbar pb-10 z-10">
           <div className="mb-2 md:mb-4 text-center w-full max-w-[520px]">
             <h1
-              className="font-bold leading-none tracking-tight pt-2 pb-1"
+              className="font-heading font-bold leading-none tracking-tight pt-2 pb-1"
               style={{
                 fontSize: "clamp(42px, 8vw, 72px)",
                 background: "linear-gradient(180deg, #ffffff 0%, #7B2FF7 100%)",

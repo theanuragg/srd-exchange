@@ -84,10 +84,11 @@ export function TokenModal({ isOpen, onClose, chainId, onSelect }: TokenModalPro
   const searchCustomToken = async (address: string) => {
     setIsSearching(true);
     try {
-      const isTestnet = process.env.NEXT_PUBLIC_USE_TESTNET === 'true';
-      const baseUrl = isTestnet ? 'https://api.testnets.relay.link' : 'https://api.relay.link';
+      const baseUrl = 'https://api.relay.link';
+      const apiKey = process.env.NEXT_PUBLIC_RELAY_API_KEY;
+      const headers: HeadersInit = apiKey ? { 'x-api-key': apiKey } : {};
       
-      const response = await fetch(`${baseUrl}/chains/${chainId}/currencies/${address}`);
+      const response = await fetch(`${baseUrl}/chains/${chainId}/currencies/${address}`, { headers });
       if (response.ok) {
         const data = await response.json();
         // The API returns the currency info directly

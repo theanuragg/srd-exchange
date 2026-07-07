@@ -75,7 +75,55 @@ const ENTRY_POINT_ABI = [
   },
 ] as const;
 
+function getAlchemyRpcUrl(chainId: number): string {
+  switch (chainId) {
+    case 1: return "https://eth-mainnet.g.alchemy.com/v2";
+    case 137: return "https://polygon-mainnet.g.alchemy.com/v2";
+    case 42161: return "https://arb-mainnet.g.alchemy.com/v2";
+    case 8453: return "https://base-mainnet.g.alchemy.com/v2";
+    case 10: return "https://opt-mainnet.g.alchemy.com/v2";
+    case 11155111: return "https://eth-sepolia.g.alchemy.com/v2";
+    case 56:
+    default: return "https://bnb-mainnet.g.alchemy.com/v2";
+  }
+}
+
 export async function getSenderNonce(sender: Address, chainId: number = 56): Promise<bigint> {
+  const apiKey = process.env.NEXT_PUBLIC_ALCHEMY_API_KEY;
+  
+  if (apiKey) {
+    try {
+      const rpcUrl = getAlchemyRpcUrl(chainId);
+      const response = await fetch(`${rpcUrl}/${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_call",
+          params: [
+            {
+              to: ENTRY_POINT_V06,
+              data: encodeFunctionData({
+                abi: ENTRY_POINT_ABI,
+                functionName: "getNonce",
+                args: [sender, 0n],
+              })
+            },
+            "latest"
+          ]
+        })
+      });
+      
+      const data = await response.json();
+      if (data.result && data.result !== "0x") {
+        return BigInt(data.result);
+      }
+    } catch (error) {
+      console.warn("Failed to fetch nonce from Alchemy, falling back to public RPC:", error);
+    }
+  }
+
   const result = await retryWithRPCFailover(async (client) => {
     return client.readContract({
       address: ENTRY_POINT_V06,
@@ -245,19 +293,6 @@ export async function computeUserOpHash(userOp: Record<string, unknown>, chainId
   }, 3, chainId);
   if (result === null) throw new Error("Failed to compute userOp hash from entry point");
   return result;
-}
-
-function getAlchemyRpcUrl(chainId: number): string {
-  switch (chainId) {
-    case 1: return "https://eth-mainnet.g.alchemy.com/v2";
-    case 137: return "https://polygon-mainnet.g.alchemy.com/v2";
-    case 42161: return "https://arb-mainnet.g.alchemy.com/v2";
-    case 8453: return "https://base-mainnet.g.alchemy.com/v2";
-    case 10: return "https://opt-mainnet.g.alchemy.com/v2";
-    case 11155111: return "https://eth-sepolia.g.alchemy.com/v2";
-    case 56:
-    default: return "https://bnb-mainnet.g.alchemy.com/v2";
-  }
 }
 
 export async function submitToAlchemyBundler(userOp: Record<string, unknown>, chainId: number = 56): Promise<Hex> {

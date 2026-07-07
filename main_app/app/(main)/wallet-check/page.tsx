@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useWalletManager } from '@/hooks/useWalletManager';
 import AuthGuard from '@/components/auth/AuthGuard';
-import SimpleNav from '@/components/simple-nav';
+import Navigation from '@/components/landing/Navigation';
 
 const CHAINS = [
   { name: 'Ethereum',     chainId: 1,      abbr: 'ETH',  explorer: 'https://etherscan.io/address/' },
@@ -29,7 +29,7 @@ export default function WalletCheckPage() {
   return (
     <AuthGuard requireAuth={true}>
       <div className="bg-black min-h-screen text-white">
-        <SimpleNav />
+        <Navigation />
         <main className="max-w-3xl mx-auto px-4 pt-8 pb-16">
           <h1 className="text-2xl font-bold mb-2">Wallet Address Check</h1>
           <p className="text-white/50 text-sm mb-8">

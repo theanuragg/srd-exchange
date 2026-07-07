@@ -5,10 +5,11 @@ import { Address } from 'viem';
 // Initialize the Relay Client
 // Note: In a production app with SSR, you might want to initialize this in a Provider component
 try {
-  const isTestnet = process.env.NEXT_PUBLIC_USE_TESTNET === 'true';
+  const apiKey = process.env.NEXT_PUBLIC_RELAY_API_KEY;
   createClient({
-    baseApiUrl: isTestnet ? 'https://api.testnets.relay.link' : 'https://api.relay.link',
+    baseApiUrl: 'https://api.relay.link',
     source: 'srd-exchange',
+    ...(apiKey && { apiKey }),
   });
 } catch (e) {
   // Ignore error if client is already initialized

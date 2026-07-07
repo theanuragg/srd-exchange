@@ -16,7 +16,7 @@ import {
   Check,
   AlertTriangle,
 } from "lucide-react";
-import SimpleNav from "@/components/simple-nav";
+import Navigation from '@/components/landing/Navigation';
 
 interface BankDetails {
   accountNumber: string;
@@ -223,7 +223,7 @@ export default function CompleteProfilePage() {
   if (isSuccess) {
     return (
       <div className="min-h-screen bg-black">
-        <SimpleNav />
+        <Navigation />
         <div className="flex items-center justify-center p-4" style={{ height: 'calc(100vh - 80px)' }}>
           <motion.div
             className="text-center"
@@ -252,7 +252,7 @@ export default function CompleteProfilePage() {
   return (
     <div className="min-h-screen bg-black">
       {/* Navigation */}
-      <SimpleNav />
+      <Navigation />
 
       {/* Main Content - Responsive container */}
       <div className="px-4 md:px-8 py-6 md:py-8 max-w-6xl mx-auto">
