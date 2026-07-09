@@ -13,6 +13,7 @@ import { sendSponsoredBatchSmartAccountTransaction } from '@/lib/sponsoredTransa
 import { createSignHashWithRetry } from '@/lib/sponsoredSigning'
 import { retryWithRPCFailover } from '@/lib/rpcManager'
 import { waitForUserOperationReceipt } from '@/lib/userOpBuilder'
+import { relayInstructionsToBase64 } from '@/lib/solanaTransactionBuilder'
 export { DynamicTokenModal };
 
 function TokenChip({
@@ -143,22 +144,58 @@ export default function MultiChainSwap() {
     const fetchBalance = async () => {
       setIsFetchingBalance(true);
       try {
-        const balance = await retryWithRPCFailover(async (client) => {
-          const isNative = sourceToken.address === '0x0000000000000000000000000000000000000000' || sourceToken.address.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+        if (sourceChain === 792703809) {
+          if (!solanaAddress) return;
+          const rpcUrl = `https://solana-mainnet.g.alchemy.com/v2/${process.env.NEXT_PUBLIC_ALCHEMY_API_KEY}`;
+          const isNative = (sourceToken.address as string) === '11111111111111111111111111111111';
+          
           if (isNative) {
-            return await client.getBalance({ address: smartWalletAddress as Address });
-          } else {
-            return await client.readContract({
-              address: sourceToken.address as Address,
-              abi: parseAbi(["function balanceOf(address owner) view returns (uint256)"]),
-              functionName: "balanceOf",
-              args: [smartWalletAddress as Address],
+            const res = await fetch(rpcUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getBalance', params: [solanaAddress] })
             });
+            const data = await res.json();
+            if (isMounted) setSourceTokenBalance(BigInt(data.result?.value || 0));
+          } else {
+            const res = await fetch(rpcUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                jsonrpc: '2.0', id: 1, method: 'getTokenAccountsByOwner',
+                params: [solanaAddress, { programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' }, { encoding: 'jsonParsed' }]
+              })
+            });
+            const data = await res.json();
+            const accounts = data.result?.value || [];
+            let foundBalance = 0n;
+            for (const acc of accounts) {
+              const parsed = acc.account?.data?.parsed?.info;
+              if (parsed && parsed.mint === sourceToken.address) {
+                foundBalance = BigInt(parsed.tokenAmount?.amount || 0);
+                break;
+              }
+            }
+            if (isMounted) setSourceTokenBalance(foundBalance);
           }
-        }, 3, sourceChain);
-        
-        if (isMounted && balance !== null) {
-          setSourceTokenBalance(balance as bigint);
+        } else {
+          const balance = await retryWithRPCFailover(async (client) => {
+            const isNative = sourceToken.address === '0x0000000000000000000000000000000000000000' || sourceToken.address.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+            if (isNative) {
+              return await client.getBalance({ address: smartWalletAddress as Address });
+            } else {
+              return await client.readContract({
+                address: sourceToken.address as Address,
+                abi: parseAbi(["function balanceOf(address owner) view returns (uint256)"]),
+                functionName: "balanceOf",
+                args: [smartWalletAddress as Address],
+              });
+            }
+          }, 3, sourceChain);
+          
+          if (isMounted && balance !== null) {
+            setSourceTokenBalance(balance as bigint);
+          }
         }
       } catch (err) {
         // Silently ignore balance fetch errors (e.g. token contract doesn't exist on this chain yet)
@@ -214,26 +251,37 @@ export default function MultiChainSwap() {
       const transactions = [];
 
       if (sourceChain === 792703809) {
-        let base64Tx = "";
+        if (!solanaAddress) throw new Error("Solana wallet not connected.");
+        
+        let payload = null;
         for (const step of quote.steps) {
           for (const item of step.items) {
-            const payload = item.data as any;
-            if (!payload) continue;
-            
-            if (typeof payload === 'string') {
-              base64Tx = payload;
-            } else if (payload.transaction) {
-              base64Tx = typeof payload.transaction === 'string' ? payload.transaction : (payload.transaction.serialized || payload.transaction.data);
-            } else if (payload.data) {
-              base64Tx = payload.data;
+            if (item.data && (item.data.instructions || item.data.data || item.data.transaction)) {
+              payload = item.data;
+              break;
             }
-            
-            if (base64Tx) break;
           }
-          if (base64Tx) break;
+          if (payload) break;
         }
         
-        if (!base64Tx) throw new Error("Could not find Solana transaction payload from Relay.");
+        if (!payload) throw new Error("Could not find Solana transaction payload from Relay.");
+        
+        let base64Tx = "";
+        
+        if (typeof payload === 'string') {
+          base64Tx = payload;
+        } else if (payload.transaction) {
+          base64Tx = typeof payload.transaction === 'string' ? payload.transaction : (payload.transaction.serialized || payload.transaction.data);
+        } else if (payload.data && typeof payload.data === 'string') {
+          base64Tx = payload.data;
+        } else if (payload.instructions) {
+          // Relay v2 returns raw instructions for Solana
+          const rpcUrl = `https://solana-mainnet.g.alchemy.com/v2/${process.env.NEXT_PUBLIC_ALCHEMY_API_KEY}`;
+          base64Tx = await relayInstructionsToBase64(payload, solanaAddress, rpcUrl);
+        }
+        
+        if (!base64Tx) throw new Error("Could not compile Solana transaction.");
+        
         
         const hash = await executeSolanaSwap(base64Tx);
         setTxHash(hash);
@@ -321,7 +369,15 @@ export default function MultiChainSwap() {
 
   const handlePercent = (pct: number) => {
     if (sourceTokenBalance === null) return;
-    const maxAmount = (sourceTokenBalance * BigInt(pct)) / 100n;
+    
+    let safeBalance = sourceTokenBalance;
+    // Leave 0.0015 SOL buffer for Solana network fees & rent exemption when swapping native SOL
+    if (sourceChain === 792703809 && (sourceToken?.address as string) === '11111111111111111111111111111111') {
+      const solBuffer = 1500000n;
+      safeBalance = safeBalance > solBuffer ? safeBalance - solBuffer : 0n;
+    }
+    
+    const maxAmount = (safeBalance * BigInt(pct)) / 100n;
     setAmountIn(formatUnits(maxAmount, sourceToken?.decimals || 18));
   };
 

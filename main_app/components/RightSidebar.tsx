@@ -92,11 +92,9 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
 
     const chainConfig = getChainById(selectedChain) ?? CHAIN_CONFIGS[0]
     const isAvalanche = selectedChain === 43114
-    const assetsAddress = (selectedChain as any) === 'solana'
+    const assetsAddress = selectedChain === 792703809
         ? solanaAddress
-        : isAvalanche
-            ? eoaAddress
-            : smartWalletAddress
+        : smartWalletAddress
     const displayAddress = selectedAddress ?? address ?? ''
 
     const { assets, totalUsd, isLoading: assetsLoading, error: assetsError, refetch: refetchAssets } = useChainAssets(
@@ -315,7 +313,7 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
 
         try {
             let hash: string;
-            if ((selectedChain as any) === 'solana') {
+            if (selectedChain === 792703809) {
                 hash = await sendSolanaEoaToken(selectedAsset!, sendAmount, recipientAddress);
             } else if (selectedChain === 43114) {
                 hash = await sendAvalancheEoaToken(selectedAsset!, sendAmount, recipientAddress);
@@ -358,7 +356,7 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
         }
     }
 
-    const historyEvmAddress = isAvalanche || (selectedChain as any) === 'solana' ? (eoaAddress ?? address ?? '') : (smartWalletAddress ?? address ?? '')
+    const historyEvmAddress = selectedChain === 792703809 ? (eoaAddress ?? address ?? '') : (smartWalletAddress ?? address ?? '')
     useEffect(() => {
         if (isOpen && historyEvmAddress) {
             fetchOnChainHistory(historyEvmAddress, solanaAddress)
@@ -598,7 +596,7 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
                             <span className="font-bold">Transaction Sent!</span>
                         </div>
                         <a
-                            href={(selectedChain as any) === 'solana' ? `https://solscan.io/tx/${txHash}` : `${chainConfig.explorer}/tx/${txHash}`}
+                            href={selectedChain === 792703809 ? `https://solscan.io/tx/${txHash}` : `${chainConfig.explorer}/tx/${txHash}`}
                             target="_blank" rel="noopener noreferrer"
                             className="text-xs text-green-500/80 hover:underline break-all"
                         >
@@ -703,7 +701,7 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
                         <div className="relative">
                             <input
                                 type="text"
-                                placeholder={(selectedChain as any) === 'solana' ? 'Solana address...' : '0x...'}
+                                placeholder={selectedChain === 792703809 ? 'Solana address...' : '0x...'}
                                 value={recipientAddress}
                                 onChange={(e) => setRecipientAddress(e.target.value)}
                             className="w-full bg-white/5 border border-white/10 rounded-2xl py-3.5 px-4 pr-20 text-white focus:border-[#6320EE] outline-none transition-all placeholder:text-white/20 text-sm"
@@ -984,14 +982,14 @@ const RightSidebar: FC<RightSidebarProps> = ({ isOpen, onClose }) => {
                                     </div>
                                 ) : historyData.filter(item =>
                                     (historyTypeFilter === 'All' || item.type === historyTypeFilter) &&
-                                    (item.chainId === selectedChain || ((selectedChain as any) === 'solana' ? item.chainId === 101 : item.chainId === selectedChain))
+                                    (item.chainId === selectedChain || (selectedChain === 792703809 ? item.chainId === 101 : item.chainId === selectedChain))
                                 ).length === 0 ? (
                                     <div className="text-center py-12 text-white/30 text-sm">No transactions found</div>
                                 ) : (
                                     historyData
                                         .filter(item =>
                                             (historyTypeFilter === 'All' || item.type === historyTypeFilter) &&
-                                            (item.chainId === selectedChain || ((selectedChain as any) === 'solana' ? item.chainId === 101 : item.chainId === selectedChain))
+                                            (item.chainId === selectedChain || (selectedChain === 792703809 ? item.chainId === 101 : item.chainId === selectedChain))
                                         )
                                         .map((item, i) => (
                                             <div key={`${item.hash}-${i}`} className="flex items-center justify-between p-3 hover:bg-white/5 border border-white/5 rounded-xl transition-colors">

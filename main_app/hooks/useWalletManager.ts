@@ -1238,6 +1238,30 @@ export function useWalletManager() {
     if (!solanaAddress) throw new Error("Solana wallet not connected");
     setIsPending(true);
     try {
+      const { VersionedTransaction, Connection } = await import('@solana/web3.js');
+      const rpcUrl = `https://solana-mainnet.g.alchemy.com/v2/${process.env.NEXT_PUBLIC_ALCHEMY_API_KEY}`;
+      const connection = new Connection(rpcUrl);
+      
+      const txBuffer = Buffer.from(base64Transaction, 'base64');
+      const transaction = VersionedTransaction.deserialize(txBuffer);
+      
+      const simulation = await connection.simulateTransaction(transaction);
+      if (simulation.value.err) {
+        const logs = simulation.value.logs?.join('\n') || '';
+        let errorMessage = "Transaction simulation failed.";
+        if (logs.includes("insufficient lamports")) {
+          errorMessage = "Insufficient SOL to cover the transaction amount + network fee. Please lower your amount slightly.";
+        } else if (simulation.value.err && typeof simulation.value.err === 'object' && 'InsufficientFundsForRent' in simulation.value.err) {
+          errorMessage = "Insufficient funds for rent exemption. You must leave at least 0.001 SOL in your wallet to keep it active on Solana.";
+        } else if (logs.includes("slippage tolerance exceeded") || logs.includes("custom program error: 0x11")) {
+          errorMessage = "Slippage tolerance exceeded. The price changed during confirmation.";
+        } else {
+          errorMessage = `Simulation failed: ${JSON.stringify(simulation.value.err)}. See console for logs.`;
+          console.error("Simulation logs:", logs);
+        }
+        throw new Error(errorMessage);
+      }
+
       const result = await sendSolanaTransaction({
         solanaAccount: solanaAddress,
         network: "solana",
@@ -1245,8 +1269,12 @@ export function useWalletManager() {
       });
       setIsPending(false);
       return result.transactionSignature;
-    } catch (error) {
+    } catch (error: any) {
       setIsPending(false);
+      const msg = error?.message || String(error);
+      if (msg.includes("InstructionError:Custom")) {
+        throw new Error("Coinbase Wallet rejected the transaction. This usually happens if you don't have enough SOL left to cover their automatic priority fees, or if the price slipped. Try lowering your swap amount slightly.");
+      }
       throw error;
     }
   };

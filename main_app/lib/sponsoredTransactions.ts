@@ -10,6 +10,8 @@ import {
   sponsorViaAlchemy,
   computeUserOpHash,
   submitToAlchemyBundler,
+  isAccountDeployed,
+  estimateUserOpGasViaPimlico,
 } from "./userOpBuilder";
 
 export type SignHashFn = (params: {
@@ -37,20 +39,26 @@ async function sendUserOp(params: {
     args: params.args,
     value: params.value,
   });
+  const isDeployed = await isAccountDeployed(params.smartAccountAddress, params.chainId || 56);
   const userOp = buildUnsignedUserOp({
     sender: params.smartAccountAddress,
     nonce,
     callData,
-    ownerAddress: params.skipInitCode ? undefined : params.eoaAddress,
+    ownerAddress: isDeployed ? undefined : params.eoaAddress,
   });
-  const sponsored = await sponsorViaAlchemy(userOp, params.eoaAddress);
-  const hash = await computeUserOpHash(sponsored);
+  let sponsored: Record<string, unknown>;
+  if (params.chainId === 43114) {
+    sponsored = await estimateUserOpGasViaPimlico(userOp, params.chainId);
+  } else {
+    sponsored = await sponsorViaAlchemy(userOp, params.eoaAddress, params.chainId || 56);
+  }
+  const hash = await computeUserOpHash(sponsored, params.chainId || 56);
   const rawSignature = await signHash({
     hash,
     smartAccountAddress: params.smartAccountAddress,
     chainId: params.chainId || 56,
   });
-  const result = await submitToAlchemyBundler({ ...sponsored, signature: rawSignature });
+  const result = await submitToAlchemyBundler({ ...sponsored, signature: rawSignature }, params.chainId || 56);
   return result as Hex;
 }
 
@@ -98,13 +106,19 @@ export async function sendSponsoredSmartAccountTransaction(params: {
     data: params.transaction.data ?? "0x",
     value: BigInt(params.transaction.value ?? "0x0"),
   });
+  const isDeployed = await isAccountDeployed(params.smartAccountAddress, params.chainId || 56);
   const userOp = buildUnsignedUserOp({
     sender: params.smartAccountAddress,
     nonce,
     callData,
-    ownerAddress: params.skipInitCode ? undefined : params.eoaAddress,
+    ownerAddress: isDeployed ? undefined : params.eoaAddress,
   });
-  const sponsored = await sponsorViaAlchemy(userOp, params.eoaAddress, params.chainId || 56);
+  let sponsored: Record<string, unknown>;
+  if (params.chainId === 43114) {
+    sponsored = await estimateUserOpGasViaPimlico(userOp, params.chainId);
+  } else {
+    sponsored = await sponsorViaAlchemy(userOp, params.eoaAddress, params.chainId || 56);
+  }
   const hash = await computeUserOpHash(sponsored, params.chainId || 56);
   const rawSignature = await signHash({
     hash,
@@ -134,13 +148,19 @@ export async function sendSponsoredBatchSmartAccountTransaction(params: {
       value: BigInt(tx.value ?? "0x0"),
     }))
   );
+  const isDeployed = await isAccountDeployed(params.smartAccountAddress, params.chainId || 56);
   const userOp = buildUnsignedUserOp({
     sender: params.smartAccountAddress,
     nonce,
     callData,
-    ownerAddress: params.skipInitCode ? undefined : params.eoaAddress,
+    ownerAddress: isDeployed ? undefined : params.eoaAddress,
   });
-  const sponsored = await sponsorViaAlchemy(userOp, params.eoaAddress, params.chainId || 56);
+  let sponsored: Record<string, unknown>;
+  if (params.chainId === 43114) {
+    sponsored = await estimateUserOpGasViaPimlico(userOp, params.chainId);
+  } else {
+    sponsored = await sponsorViaAlchemy(userOp, params.eoaAddress, params.chainId || 56);
+  }
   const hash = await computeUserOpHash(sponsored, params.chainId || 56);
   const rawSignature = await signHash({
     hash,
@@ -168,13 +188,19 @@ export async function sendSponsoredContractWriteDetailed(params: {
     functionName: params.functionName,
     args: params.args,
   });
+  const isDeployed = await isAccountDeployed(params.smartAccountAddress, params.chainId || 56);
   const userOp = buildUnsignedUserOp({
     sender: params.smartAccountAddress,
     nonce,
     callData,
-    ownerAddress: params.skipInitCode ? undefined : params.eoaAddress,
+    ownerAddress: isDeployed ? undefined : params.eoaAddress,
   });
-  const sponsored = await sponsorViaAlchemy(userOp, params.eoaAddress, params.chainId);
+  let sponsored: Record<string, unknown>;
+  if (params.chainId === 43114) {
+    sponsored = await estimateUserOpGasViaPimlico(userOp, params.chainId);
+  } else {
+    sponsored = await sponsorViaAlchemy(userOp, params.eoaAddress, params.chainId);
+  }
   const userOpHash = await computeUserOpHash(sponsored, params.chainId || 56);
   const signature = await signHash({
     hash: userOpHash,

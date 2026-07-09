@@ -72,6 +72,10 @@ async function getAlchemyCode(address: string, chainId: number = 56): Promise<st
   if (chainId === 11155111) rpcUrl = `https://eth-sepolia.g.alchemy.com/v2/${apiKey}`;
   else if (chainId === 137) rpcUrl = `https://polygon-mainnet.g.alchemy.com/v2/${apiKey}`;
   else if (chainId === 8453) rpcUrl = `https://base-mainnet.g.alchemy.com/v2/${apiKey}`;
+  else if (chainId === 1) rpcUrl = `https://eth-mainnet.g.alchemy.com/v2/${apiKey}`;
+  else if (chainId === 10) rpcUrl = `https://opt-mainnet.g.alchemy.com/v2/${apiKey}`;
+  else if (chainId === 42161) rpcUrl = `https://arb-mainnet.g.alchemy.com/v2/${apiKey}`;
+  else if (chainId === 43114) rpcUrl = `https://avax-mainnet.g.alchemy.com/v2/${apiKey}`;
   const response = await fetch(rpcUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -100,6 +104,10 @@ async function getCoinbaseCounterfactualAddress(ownerAddress: Address, chainId: 
   if (chainId === 11155111) rpcUrl = `https://eth-sepolia.g.alchemy.com/v2/${apiKey}`;
   else if (chainId === 137) rpcUrl = `https://polygon-mainnet.g.alchemy.com/v2/${apiKey}`;
   else if (chainId === 8453) rpcUrl = `https://base-mainnet.g.alchemy.com/v2/${apiKey}`;
+  else if (chainId === 1) rpcUrl = `https://eth-mainnet.g.alchemy.com/v2/${apiKey}`;
+  else if (chainId === 10) rpcUrl = `https://opt-mainnet.g.alchemy.com/v2/${apiKey}`;
+  else if (chainId === 42161) rpcUrl = `https://arb-mainnet.g.alchemy.com/v2/${apiKey}`;
+  else if (chainId === 43114) rpcUrl = `https://avax-mainnet.g.alchemy.com/v2/${apiKey}`;
   const ownerBytes = encodeAbiParameters([{ type: "address" }], [ownerAddress]);
   const calldata = encodeFunctionData({
     abi: COINBASE_FACTORY_GET_ADDRESS_ABI,

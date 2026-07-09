@@ -3,6 +3,7 @@
 import { type Address, type Hex, type Abi, encodeFunctionData, encodeAbiParameters } from "viem";
 import { retryWithRPCFailover } from "./rpcManager";
 import { buildInitCode, COINBASE_SMART_WALLET_FACTORY, COINBASE_SMART_WALLET_FACTORY_ABI } from "./buildInitCode";
+import { wrapCoinbaseSmartWalletSignature } from "./coinbaseSmartWalletSignature";
 
 export const ENTRY_POINT_V06 = "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789";
 const COINBASE_SMART_ACCOUNT_ABI = [
@@ -87,6 +88,12 @@ function getAlchemyRpcUrl(chainId: number): string {
     case 56:
     default: return "https://bnb-mainnet.g.alchemy.com/v2";
   }
+}
+
+function getPimlicoRpcUrl(chainId: number): string {
+  const apiKey = process.env.NEXT_PUBLIC_PIMLICO_API_KEY;
+  if (!apiKey) throw new Error("Missing NEXT_PUBLIC_PIMLICO_API_KEY");
+  return `https://api.pimlico.io/v2/${chainId}/rpc?apikey=${apiKey}`;
 }
 
 export async function getSenderNonce(sender: Address, chainId: number = 56): Promise<bigint> {
@@ -219,7 +226,7 @@ export async function isAccountDeployed(address: Address, chainId: number = 56):
   const result = await retryWithRPCFailover(async (client) => {
     return client.getCode({ address });
   }, 3, chainId);
-  return result !== null && result !== "0x";
+  return result !== null && result !== undefined && result !== "0x";
 }
 
 export function buildUnsignedUserOp(params: {
@@ -239,6 +246,7 @@ export function buildUnsignedUserOp(params: {
     maxFeePerGas: "0x0" as Hex,
     maxPriorityFeePerGas: "0x0" as Hex,
     paymasterAndData: "0x" as Hex,
+    signature: wrapCoinbaseSmartWalletSignature("0x010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101011b"),
   };
 }
 
@@ -269,6 +277,54 @@ export async function sponsorViaAlchemy(
   return data.userOperation as Record<string, unknown>;
 }
 
+export async function estimateUserOpGasViaPimlico(
+  userOp: Record<string, unknown>,
+  chainId: number = 43114
+): Promise<Record<string, unknown>> {
+  const rpcUrl = getPimlicoRpcUrl(chainId);
+
+  // Get gas prices
+  const priceResponse = await fetch(rpcUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "pimlico_getUserOperationGasPrice",
+      params: []
+    }),
+  });
+  const priceData = await priceResponse.json();
+  if (priceData.error) {
+    throw new Error(`Pimlico gas price error: ${priceData.error.message}`);
+  }
+  const fastPrices = priceData.result.fast;
+  userOp.maxFeePerGas = fastPrices.maxFeePerGas;
+  userOp.maxPriorityFeePerGas = fastPrices.maxPriorityFeePerGas;
+
+  // Estimate Gas Limits
+  const estimateResponse = await fetch(rpcUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "eth_estimateUserOperationGas",
+      params: [userOp, ENTRY_POINT_V06]
+    }),
+  });
+  const estimateData = await estimateResponse.json();
+  if (estimateData.error) {
+    throw new Error(`Pimlico gas estimation error: ${estimateData.error.message}`);
+  }
+  
+  userOp.preVerificationGas = estimateData.result.preVerificationGas;
+  userOp.verificationGasLimit = estimateData.result.verificationGasLimit;
+  userOp.callGasLimit = estimateData.result.callGasLimit;
+
+  return userOp;
+}
+
 export async function computeUserOpHash(userOp: Record<string, unknown>, chainId: number = 56): Promise<Hex> {
   const op = {
     sender: userOp.sender as Address,
@@ -297,11 +353,16 @@ export async function computeUserOpHash(userOp: Record<string, unknown>, chainId
 }
 
 export async function submitToAlchemyBundler(userOp: Record<string, unknown>, chainId: number = 56): Promise<Hex> {
-  const apiKey = process.env.NEXT_PUBLIC_ALCHEMY_API_KEY;
-  if (!apiKey) throw new Error("Missing NEXT_PUBLIC_ALCHEMY_API_KEY");
-  const rpcUrl = getAlchemyRpcUrl(chainId);
+  let rpcUrl = "";
+  if (chainId === 43114) {
+    rpcUrl = getPimlicoRpcUrl(chainId);
+  } else {
+    const apiKey = process.env.NEXT_PUBLIC_ALCHEMY_API_KEY;
+    if (!apiKey) throw new Error("Missing NEXT_PUBLIC_ALCHEMY_API_KEY");
+    rpcUrl = `${getAlchemyRpcUrl(chainId)}/${apiKey}`;
+  }
 
-  const response = await fetch(`${rpcUrl}/${apiKey}`, {
+  const response = await fetch(rpcUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -313,18 +374,23 @@ export async function submitToAlchemyBundler(userOp: Record<string, unknown>, ch
   });
   const data = await response.json();
   if (data.error) {
-    throw new Error(`Alchemy bundler error: ${data.error.message}`);
+    throw new Error(`Bundler error: ${data.error.message}`);
   }
   return data.result as Hex;
 }
 
 export async function waitForUserOperationReceipt(userOpHash: Hex, chainId: number = 56, retries = 30): Promise<any> {
-  const apiKey = process.env.NEXT_PUBLIC_ALCHEMY_API_KEY;
-  if (!apiKey) throw new Error("Missing NEXT_PUBLIC_ALCHEMY_API_KEY");
-  const rpcUrl = getAlchemyRpcUrl(chainId);
+  let rpcUrl = "";
+  if (chainId === 43114) {
+    rpcUrl = getPimlicoRpcUrl(chainId);
+  } else {
+    const apiKey = process.env.NEXT_PUBLIC_ALCHEMY_API_KEY;
+    if (!apiKey) throw new Error("Missing NEXT_PUBLIC_ALCHEMY_API_KEY");
+    rpcUrl = `${getAlchemyRpcUrl(chainId)}/${apiKey}`;
+  }
 
   for (let i = 0; i < retries; i++) {
-    const response = await fetch(`${rpcUrl}/${apiKey}`, {
+    const response = await fetch(rpcUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
