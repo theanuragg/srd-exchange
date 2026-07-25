@@ -101,7 +101,9 @@ export default function RightSidebar() {
     }, [])
 
     const chainConfig = getChainById(selectedChain) ?? CHAIN_CONFIGS[0]
-    const assetsAddress = selectedChain === 792703809
+    const isSolanaSelected = selectedChain === 792703809
+    const solanaWalletReady = isSolanaSelected && !!solanaAddress
+    const assetsAddress = isSolanaSelected
         ? solanaAddress
         : smartWalletAddress
     const displayAddress = selectedAddress ?? address ?? ''
@@ -111,6 +113,8 @@ export default function RightSidebar() {
         selectedChain
     )
     const visibleAssets = assets.filter(a => parseFloat(a.balanceUsd) >= 0.01)
+
+    const solanaWalletLoading = isSolanaSelected && !solanaAddress
 
     useEffect(() => {
         const target = parseFloat(totalUsd)
@@ -274,7 +278,7 @@ export default function RightSidebar() {
             setTxHash(hash)
             setSendAmount('')
             setRecipientAddress('')
-            setTimeout(() => { if (historyEvmAddress) fetchOnChainHistory(historyEvmAddress, solanaAddress) }, 5000)
+            setTimeout(() => { if (historyEvmAddress) fetchOnChainHistory(historyEvmAddress, solanaAddress, eoaAddress) }, 5000)
         } catch (err: any) {
             console.error('[Send error]', err)
             let msg = err.message || 'Unknown error'
@@ -288,13 +292,14 @@ export default function RightSidebar() {
         }
     }
 
-    const fetchOnChainHistory = async (evmAddr: string, solAddr?: string | null) => {
+    const fetchOnChainHistory = async (evmAddr: string, solAddr?: string | null, eoaAddr?: string | null) => {
         if (!evmAddr && !solAddr) return
         setIsHistoryLoading(true)
         try {
             const params = new URLSearchParams()
             if (evmAddr) params.set('address', evmAddr)
             if (solAddr) params.set('solanaAddress', solAddr)
+            if (eoaAddr && eoaAddr !== evmAddr) params.set('eoaAddress', eoaAddr)
             const res = await fetch(`/api/wallet/history?${params}`)
             const data = await res.json()
             setHistoryData(data.transactions ?? [])
@@ -309,9 +314,9 @@ export default function RightSidebar() {
     const historyEvmAddress = selectedChain === 792703809 ? (eoaAddress ?? address ?? '') : (smartWalletAddress ?? address ?? '')
     useEffect(() => {
         if (historyEvmAddress) {
-            fetchOnChainHistory(historyEvmAddress, solanaAddress)
+            fetchOnChainHistory(historyEvmAddress, solanaAddress, eoaAddress)
         }
-    }, [historyEvmAddress, solanaAddress])
+    }, [historyEvmAddress, solanaAddress, eoaAddress])
 
     useEffect(() => {
         const fetchRates = async () => {
@@ -947,7 +952,7 @@ export default function RightSidebar() {
                 <div className="flex items-center gap-2">
                     <div className="text-text-secondary text-xs">{chainConfig.name}</div>
                     <button
-                        onClick={() => fetchOnChainHistory(historyEvmAddress, solanaAddress)}
+                        onClick={() => fetchOnChainHistory(historyEvmAddress, solanaAddress, eoaAddress)}
                         className="p-1 hover:bg-white/10 rounded-full transition-colors"
                         title="Refresh"
                     >
@@ -1043,7 +1048,7 @@ export default function RightSidebar() {
                             />
 
                             <button
-                                onClick={() => { setCurrentView('History'); fetchOnChainHistory(historyEvmAddress, solanaAddress) }}
+                                onClick={() => { setCurrentView('History'); fetchOnChainHistory(historyEvmAddress, solanaAddress, eoaAddress) }}
                                 className="absolute top-4 right-4 z-20 w-11 h-11 rounded-lg bg-transparent flex items-center justify-center transition hover:bg-white/5"
                                 title="Transaction History"
                             >
@@ -1188,7 +1193,13 @@ export default function RightSidebar() {
                             )}
                             {!assetsLoading && !assetsError && visibleAssets.length === 0 && (
                                 <div className="text-center py-6 text-text-secondary text-sm">
-                                    {assets.length === 0 ? `No assets on ${chainConfig.name}` : 'No assets above $0.01'}
+                                    {solanaWalletLoading ? (
+                                        <span>No Solana wallet found. Switch to Solana to create one.</span>
+                                    ) : assets.length === 0 ? (
+                                        `No assets on ${chainConfig.name}`
+                                    ) : (
+                                        'No assets above $0.01'
+                                    )}
                                 </div>
                             )}
                             {!assetsLoading && visibleAssets.map((asset, i) => (

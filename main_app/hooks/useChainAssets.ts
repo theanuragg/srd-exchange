@@ -21,6 +21,7 @@ export function useChainAssets(
   const fetch = useCallback(async () => {
     if (!address) {
       setAssets([]);
+      setIsLoading(false);
       return;
     }
 

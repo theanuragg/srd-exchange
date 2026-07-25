@@ -108,6 +108,7 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const address = searchParams.get('address');
   const solanaAddress = searchParams.get('solanaAddress');
+  const eoaAddress = searchParams.get('eoaAddress');
 
   if (!address) {
     return NextResponse.json({ error: 'Missing address', transactions: [] }, { status: 400 });
@@ -118,18 +119,34 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'ALCHEMY_API_KEY not set', transactions: [] }, { status: 500 });
   }
 
-  const evmResults = await Promise.allSettled(
-    CHAINS.map(chain => fetchEvmChainHistory(chain, apiKey, address))
-  );
+  // Collect all EVM addresses to query (primary + eoa fallback, deduplicated)
+  const evmAddresses = [address];
+  if (eoaAddress && eoaAddress !== address) {
+    evmAddresses.push(eoaAddress);
+  }
+
+  const allEvmResults: any[] = [];
+  for (const evmAddr of evmAddresses) {
+    const results = await Promise.allSettled(
+      CHAINS.map(chain => fetchEvmChainHistory(chain, apiKey, evmAddr))
+    );
+    for (const r of results) {
+      if (r.status === 'fulfilled') allEvmResults.push(...r.value);
+    }
+  }
 
   const solanaResults = solanaAddress
     ? await fetchSolanaHistory(apiKey, solanaAddress)
     : [];
 
-  const transactions = [
-    ...evmResults.flatMap(r => r.status === 'fulfilled' ? r.value : []),
-    ...solanaResults,
-  ]
+  // Deduplicate by hash (keep first occurrence)
+  const seen = new Set<string>();
+  const transactions = [...allEvmResults, ...solanaResults]
+    .filter(tx => {
+      if (seen.has(tx.hash)) return false;
+      seen.add(tx.hash);
+      return true;
+    })
     .sort((a, b) => b.timestamp - a.timestamp)
     .slice(0, 50);
 
