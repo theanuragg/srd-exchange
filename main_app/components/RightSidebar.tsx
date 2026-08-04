@@ -102,17 +102,19 @@ export default function RightSidebar() {
 
     const chainConfig = getChainById(selectedChain) ?? CHAIN_CONFIGS[0]
     const isSolanaSelected = selectedChain === 792703809
-    const solanaWalletReady = isSolanaSelected && !!solanaAddress
-    const assetsAddress = isSolanaSelected
-        ? solanaAddress
-        : smartWalletAddress
-    const displayAddress = selectedAddress ?? address ?? ''
+    const isAvaxSelected = selectedChain === 43114
+    const evmAddressForSidebar = isAvaxSelected ? (eoaAddress ?? address) : (smartWalletAddress ?? address)
+    const assetsAddress = isSolanaSelected ? solanaAddress : evmAddressForSidebar
+    const displayAddress = isSolanaSelected ? (solanaAddress ?? '') : (evmAddressForSidebar ?? '')
 
     const { assets, totalUsd, isLoading: assetsLoading, error: assetsError, refetch: refetchAssets } = useChainAssets(
         assetsAddress,
         selectedChain
     )
-    const visibleAssets = assets.filter(a => parseFloat(a.balanceUsd) >= 0.01)
+    const visibleAssets = assets.filter(a => {
+        if (isSolanaSelected) return parseFloat(a.balance) > 0
+        return parseFloat(a.balanceUsd) >= 0.01
+    })
 
     const solanaWalletLoading = isSolanaSelected && !solanaAddress
 
@@ -301,6 +303,10 @@ export default function RightSidebar() {
             if (solAddr) params.set('solanaAddress', solAddr)
             if (eoaAddr && eoaAddr !== evmAddr) params.set('eoaAddress', eoaAddr)
             const res = await fetch(`/api/wallet/history?${params}`)
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}))
+                throw new Error(err?.error || `Failed to fetch history (${res.status})`)
+            }
             const data = await res.json()
             setHistoryData(data.transactions ?? [])
         } catch (err) {
@@ -311,11 +317,9 @@ export default function RightSidebar() {
         }
     }
 
-    const historyEvmAddress = selectedChain === 792703809 ? (eoaAddress ?? address ?? '') : (smartWalletAddress ?? address ?? '')
+    const historyEvmAddress = isSolanaSelected ? (eoaAddress ?? address ?? '') : (evmAddressForSidebar ?? '')
     useEffect(() => {
-        if (historyEvmAddress) {
-            fetchOnChainHistory(historyEvmAddress, solanaAddress, eoaAddress)
-        }
+        if (historyEvmAddress || solanaAddress) fetchOnChainHistory(historyEvmAddress, solanaAddress, eoaAddress)
     }, [historyEvmAddress, solanaAddress, eoaAddress])
 
     useEffect(() => {
